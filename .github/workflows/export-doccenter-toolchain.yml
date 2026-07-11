@@ -3,6 +3,8 @@ name: Export DocCenter Android toolchain
 on:
   push:
     branches: [doccenter-build-v7-7-28]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
