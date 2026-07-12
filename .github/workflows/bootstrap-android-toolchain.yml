@@ -1,0 +1,51 @@
+name: Bootstrap Android Toolchain
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bootstrap-android-toolchain.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Gradle and Android SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf toolchain-build tools-cache
+          mkdir -p toolchain-build/android-sdk/cmdline-tools toolchain-build/gradle
+          curl -L --retry 5 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q /tmp/gradle.zip -d toolchain-build/gradle
+          curl -L --retry 5 -o /tmp/cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdline.zip -d /tmp/cmdline
+          mkdir -p toolchain-build/android-sdk/cmdline-tools/latest
+          cp -a /tmp/cmdline/cmdline-tools/. toolchain-build/android-sdk/cmdline-tools/latest/
+          export ANDROID_SDK_ROOT="$PWD/toolchain-build/android-sdk"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "platform-tools"
+          rm -rf "$ANDROID_SDK_ROOT/.temp" "$ANDROID_SDK_ROOT/licenses"
+          tar -C toolchain-build -czf /tmp/android-toolchain.tar.gz gradle android-sdk
+          mkdir -p tools-cache
+          split -b 45M -d -a 3 /tmp/android-toolchain.tar.gz tools-cache/android-toolchain.part-
+          sha256sum /tmp/android-toolchain.tar.gz > tools-cache/android-toolchain.sha256
+          du -sh toolchain-build /tmp/android-toolchain.tar.gz tools-cache
+      - name: Commit split toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools-cache
+          git commit -m "chore: cache Android build toolchain [skip ci]"
+          git push
