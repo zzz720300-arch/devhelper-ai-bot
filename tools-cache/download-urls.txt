@@ -1,0 +1,9 @@
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-000
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-001
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-002
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-003
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-004
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-005
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-006
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-007
+https://cdn.jsdelivr.net/gh/zzz720300-arch/devhelper-ai-bot@main/tools-cache/android-toolchain.part-008
