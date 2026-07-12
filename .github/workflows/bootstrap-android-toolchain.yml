@@ -9,43 +9,38 @@ on:
 permissions:
   contents: write
 
+env:
+  TOOLCHAIN_ARTIFACT: android-toolchain
+
 jobs:
-  bootstrap:
+  publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Download Gradle and Android SDK
+      - name: Reassemble cached toolchain
         shell: bash
         run: |
           set -euxo pipefail
-          rm -rf toolchain-build tools-cache
-          mkdir -p toolchain-build/android-sdk/cmdline-tools toolchain-build/gradle
-          curl -L --retry 5 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
-          unzip -q /tmp/gradle.zip -d toolchain-build/gradle
-          curl -L --retry 5 -o /tmp/cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q /tmp/cmdline.zip -d /tmp/cmdline
-          mkdir -p toolchain-build/android-sdk/cmdline-tools/latest
-          cp -a /tmp/cmdline/cmdline-tools/. toolchain-build/android-sdk/cmdline-tools/latest/
-          export ANDROID_SDK_ROOT="$PWD/toolchain-build/android-sdk"
-          export ANDROID_HOME="$ANDROID_SDK_ROOT"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            "platform-tools"
-          rm -rf "$ANDROID_SDK_ROOT/.temp" "$ANDROID_SDK_ROOT/licenses"
-          tar -C toolchain-build -czf /tmp/android-toolchain.tar.gz gradle android-sdk
-          mkdir -p tools-cache
-          split -b 45M -d -a 3 /tmp/android-toolchain.tar.gz tools-cache/android-toolchain.part-
-          sha256sum /tmp/android-toolchain.tar.gz > tools-cache/android-toolchain.sha256
-          du -sh toolchain-build /tmp/android-toolchain.tar.gz tools-cache
-      - name: Commit split toolchain
+          cat tools-cache/android-toolchain.part-* > /tmp/android-toolchain.tar.gz
+          sha256sum /tmp/android-toolchain.tar.gz
+          test "$(sha256sum /tmp/android-toolchain.tar.gz | awk '{print $1}')" = "$(awk '{print $1}' tools-cache/android-toolchain.sha256)"
+      - name: Upload toolchain artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-toolchain
+          path: /tmp/android-toolchain.tar.gz
+          compression-level: 0
+          retention-days: 1
+      - name: Store workflow metadata
         shell: bash
         run: |
           set -euxo pipefail
+          printf '%s\n' "$GITHUB_RUN_ID" > tools-cache/latest-run-id.txt
+          printf '%s\n' "${{ steps.upload.outputs.artifact-id }}" > tools-cache/latest-artifact-id.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tools-cache
-          git commit -m "chore: cache Android build toolchain [skip ci]"
+          git add tools-cache/latest-run-id.txt tools-cache/latest-artifact-id.txt
+          git commit -m "chore: record toolchain artifact [skip ci]"
           git push
