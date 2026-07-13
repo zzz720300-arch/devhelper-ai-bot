@@ -20,9 +20,7 @@ jobs:
           cp "$DIR/apksigner" exported-tools/apksigner
           cp "$DIR/zipalign" exported-tools/zipalign
           cp "$DIR/lib/apksigner.jar" exported-tools/apksigner.jar
-          LIBCPP="$(find "$SDK" -type f -name 'libc++.so' | head -1)"
-          test -n "$LIBCPP"
-          cp "$LIBCPP" exported-tools/libc++.so
+          cp "$DIR/lib64/libc++.so" exported-tools/libc++.so
           chmod +x exported-tools/apksigner exported-tools/zipalign
           ldd "$DIR/zipalign" || true
           sha256sum exported-tools/* | tee exported-tools/SHA256SUMS.txt
