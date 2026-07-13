@@ -12,20 +12,19 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          echo "ANDROID_HOME=${ANDROID_HOME:-}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          if [ ! -d "$SDK/build-tools" ]; then
-            echo "Android SDK build-tools not found" >&2
-            exit 1
-          fi
+          test -d "$SDK/build-tools"
           VER="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
           DIR="$SDK/build-tools/$VER"
           mkdir -p exported-tools
           cp "$DIR/apksigner" exported-tools/apksigner
           cp "$DIR/zipalign" exported-tools/zipalign
           cp "$DIR/lib/apksigner.jar" exported-tools/apksigner.jar
+          LIBCPP="$(find "$SDK" -type f -name 'libc++.so' | head -1)"
+          test -n "$LIBCPP"
+          cp "$LIBCPP" exported-tools/libc++.so
           chmod +x exported-tools/apksigner exported-tools/zipalign
+          ldd "$DIR/zipalign" || true
           sha256sum exported-tools/* | tee exported-tools/SHA256SUMS.txt
           file exported-tools/*
       - name: Upload tools
