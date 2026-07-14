@@ -14,7 +14,7 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,12 +52,11 @@ jobs:
       - name: Launch and inspect on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 29
           arch: x86_64
-          target: google_apis
-          profile: pixel_6
+          target: default
+          profile: Nexus 6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             set -euo pipefail
             APK=nika_full_project/app/build/outputs/apk/debug/app-debug.apk
@@ -66,14 +65,12 @@ jobs:
             adb shell pm grant ru.nika.voice android.permission.CAMERA || true
             adb shell am force-stop ru.nika.voice
             adb shell am start -W -n ru.nika.voice/.MainActivity | tee START_RESULT.txt
-            sleep 12
+            sleep 10
             PID="$(adb shell pidof ru.nika.voice | tr -d '\r')"
             test -n "$PID"
             echo "PID=$PID" | tee PROCESS_RESULT.txt
             adb exec-out screencap -p > NIKA_LAUNCH.png
-            adb shell uiautomator dump /sdcard/nika_window.xml || true
-            adb pull /sdcard/nika_window.xml NIKA_WINDOW.xml || true
-            adb shell input tap 680 65
+            adb shell input tap 900 160
             sleep 3
             adb exec-out screencap -p > NIKA_TEXT_MODE.png
             adb logcat -d > NIKA_LOGCAT.txt
@@ -96,7 +93,6 @@ jobs:
             PROCESS_RESULT.txt
             NIKA_LAUNCH.png
             NIKA_TEXT_MODE.png
-            NIKA_WINDOW.xml
             NIKA_LOGCAT.txt
           if-no-files-found: warn
           retention-days: 30
