@@ -1,0 +1,1 @@
+Temporary CI build branch for DocCenter Word Lite V7.7.28.
