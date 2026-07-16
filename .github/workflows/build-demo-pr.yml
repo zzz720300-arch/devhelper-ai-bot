@@ -49,6 +49,17 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
+      - name: Package signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p signing-tools/lib
+          cp "$ANDROID_HOME/build-tools/35.0.0/apksigner" signing-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" signing-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" signing-tools/lib/
+          chmod +x signing-tools/apksigner signing-tools/zipalign
+          tar -czf ANDROID_SIGNING_TOOLS_35.tar.gz signing-tools
+
       - name: Build APK
         shell: bash
         run: |
@@ -65,5 +76,13 @@ jobs:
           path: |
             DEMO_PLACEHOLDER.apk
             DEMO_PLACEHOLDER.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: ANDROID_SIGNING_TOOLS_35
+          path: ANDROID_SIGNING_TOOLS_35.tar.gz
           if-no-files-found: error
           retention-days: 7
