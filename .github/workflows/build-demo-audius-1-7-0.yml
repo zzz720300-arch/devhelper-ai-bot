@@ -66,7 +66,7 @@ jobs:
           base64 -d audius_patch/demo-release.keystore.b64 > demo_rutube_src/signing/demo-release.keystore
           echo '3e48e68642a3bd284d52a15b37043eb22a3abc233c34425c733acb759b617a7a  demo_rutube_src/signing/demo-release.keystore' | sha256sum -c -
 
-          for n in $(seq -w 1 9); do test -s "$APP/assets/videos/video_${n}.mp4"; done
+          for n in $(seq -w 01 09); do test -s "$APP/assets/videos/video_${n}.mp4"; done
           test ! -e "$APP/assets/videos/video_10.mp4"
           test -s "$APP/assets/prompts/default_role_prompt.txt"
           test -s "$APP/assets/config/routerai_key.txt"
@@ -133,6 +133,7 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
+          set +e
           set -o pipefail
           {
             yes | sdkmanager --licenses >/dev/null || true
@@ -145,7 +146,7 @@ jobs:
             grep -q "versionName='1.7.0'" badging.txt
             grep -q "application-label:'Демо'" badging.txt
             unzip -l Demo_Voice_1.7.0.apk > contents.txt
-            for n in $(seq -w 1 9); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
+            for n in $(seq -w 01 09); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
             ! grep -q 'assets/videos/video_10.mp4' contents.txt
             grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
             grep -q 'assets/config/routerai_key.txt' contents.txt
