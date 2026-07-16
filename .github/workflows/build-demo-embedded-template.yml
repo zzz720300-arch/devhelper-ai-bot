@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d payload/demo-embedded-template.b64 > demo-template.tar.gz
+          cat payload/demo-embedded-template.part.* | base64 -d > demo-template.tar.gz
           tar -xzf demo-template.tar.gz
           test -f demo_template/app/src/main/java/ru/demo/voice/MainActivity.java
           test -f demo_template/app/src/main/assets/videos/video_03.mp4
