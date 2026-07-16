@@ -26,12 +26,26 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 1
 
+      - name: Mark build started
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build_output_audius
+          date -u > build_output_audius/STARTED.txt
+          echo "${GITHUB_SHA}" > build_output_audius/SOURCE_COMMIT.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -f build_output_audius/STARTED.txt build_output_audius/SOURCE_COMMIT.txt
+          git commit -m "CI started: Demo Audius 1.7.0 [skip ci]" || true
+          git push --force origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
+
       - name: Restore 1.5 base and apply Audius patch
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build_output_audius demo_rutube_src
+          rm -rf demo_rutube_src
           mkdir -p build_output_audius
+          rm -f build_output_audius/STATUS.txt build_output_audius/build-exit-code.txt build_output_audius/build.log build_output_audius/Demo_Voice_1.7.0.apk.b64.part.*
           cat payload/demo-rutube-source.part.* > demo-rutube-source.b64
           echo '9b57b96e56bd55b78ebfecf39197af53a1318420c6f757576475b51acd34354a  demo-rutube-source.b64' | sha256sum -c -
           base64 -d demo-rutube-source.b64 > demo-rutube-source.tar.gz
@@ -162,7 +176,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -f build_output_audius
           git commit -m "CI result: Demo Audius 1.7.0 [skip ci]" || true
-          git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
+          git push --force origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Fail job when APK build failed
         if: steps.apkbuild.outcome == 'failure'
