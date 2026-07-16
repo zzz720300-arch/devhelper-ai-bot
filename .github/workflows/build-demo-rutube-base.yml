@@ -1,0 +1,66 @@
+name: Build Demo RUTUBE base APK
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-rutube-source.part.* > demo-rutube-source.b64
+          echo '9b57b96e56bd55b78ebfecf39197af53a1318420c6f757576475b51acd34354a  demo-rutube-source.b64' | sha256sum -c -
+          base64 -d demo-rutube-source.b64 > demo-rutube-source.tar.gz
+          echo '8d770d9584d27409de884d86396f26916699006a9ec79b499d33847c4dfd1ae6  demo-rutube-source.tar.gz' | sha256sum -c -
+          tar -xzf demo-rutube-source.tar.gz
+          test -f demo_rutube_src/app/src/main/java/ru/demo/voice/MainActivity.java
+          test -f demo_rutube_src/app/src/main/java/ru/demo/voice/RutubeMusicController.java
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          gradle -p demo_rutube_src clean :app:assembleDebug --stacktrace
+          cp demo_rutube_src/app/build/outputs/apk/debug/app-debug.apk Demo_Voice_1.6.0-base.apk
+          unzip -t Demo_Voice_1.6.0-base.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.6.0-base.apk > badging.txt
+          grep -q "package: name='ru.demo.voice'" badging.txt
+          grep -q "versionName='1.6.0'" badging.txt
+          grep -q "application-label:'Демо'" badging.txt
+          sha256sum Demo_Voice_1.6.0-base.apk > Demo_Voice_1.6.0-base.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_RUTUBE_BASE_1_6_0
+          path: |
+            Demo_Voice_1.6.0-base.apk
+            Demo_Voice_1.6.0-base.sha256
+            badging.txt
+          retention-days: 14
