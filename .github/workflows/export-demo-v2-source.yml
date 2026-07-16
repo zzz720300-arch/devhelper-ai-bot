@@ -1,0 +1,28 @@
+name: Export Demo Voice v2 source
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source
+        run: |
+          set -euo pipefail
+          cat payload/demo-v2-source.*.txt | base64 -d > demo-v2-source.tar.gz
+          tar -xzf demo-v2-source.tar.gz
+          find demo_voice_app_v2 -type f | sort > FILES.txt
+          grep -RniE "routerai|api.?key|Введите ключ|ключ" demo_voice_app_v2 > KEY_SEARCH.txt || true
+          tar -czf DEMO_V2_SOURCE_EXPORT.tar.gz demo_voice_app_v2 FILES.txt KEY_SEARCH.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_V2_SOURCE_EXPORT
+          path: DEMO_V2_SOURCE_EXPORT.tar.gz
+          retention-days: 7

@@ -1,0 +1,131 @@
+name: Build and smoke-test Demo Voice v2
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-v2-source.*.txt | base64 -d > demo-v2-source.tar.gz
+          tar -xzf demo-v2-source.tar.gz
+          test -f demo_voice_app_v2/app/src/main/java/ru/demo/voice/MainActivity.java
+          test -s demo_voice_app_v2/app/src/main/res/raw/video_01.mp4
+          test -s demo_voice_app_v2/app/src/main/assets/prompts/default_role_prompt.txt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" "emulator" "system-images;android-29;google_apis;x86_64"
+
+      - name: Build debug and release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p demo_voice_app_v2 clean :app:assembleDebug :app:assembleRelease --stacktrace
+          cp demo_voice_app_v2/app/build/outputs/apk/debug/app-debug.apk DEMO_VOICE_V2_DEBUG.apk
+          cp demo_voice_app_v2/app/build/outputs/apk/release/app-release-unsigned.apk DEMO_VOICE_V2_RELEASE_UNSIGNED.apk
+          unzip -t DEMO_VOICE_V2_DEBUG.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging DEMO_VOICE_V2_DEBUG.apk > badging.txt
+          grep -q "package: name='ru.demo.voice'" badging.txt
+          grep -q "application-label:'Демо'" badging.txt
+          unzip -l DEMO_VOICE_V2_DEBUG.apk | tee apk_contents.txt
+          grep -q "assets/prompts/default_role_prompt.txt" apk_contents.txt
+          grep -q "res/raw/video_01.mp4" apk_contents.txt
+          sha256sum DEMO_VOICE_V2_DEBUG.apk DEMO_VOICE_V2_RELEASE_UNSIGNED.apk > SHA256SUMS.txt
+          ls -lh DEMO_VOICE_V2_*.apk
+
+      - name: Emulator launch smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set +e
+            adb install -r DEMO_VOICE_V2_DEBUG.apk > install-output.txt 2>&1
+            INSTALL_CODE=$?
+            adb logcat -c
+            adb shell am start -W -n ru.demo.voice/.MainActivity > launch-output.txt 2>&1
+            LAUNCH_CODE=$?
+            sleep 10
+            adb shell pidof ru.demo.voice > pid.txt 2>&1
+            PID_CODE=$?
+            adb logcat -d > emulator-logcat.txt 2>&1
+            adb shell dumpsys activity activities > activity-all.txt 2>&1
+            grep -E "ru.demo.voice|com.google.android.documentsui" activity-all.txt | head -80 > activity-state.txt || true
+            echo "install_code=$INSTALL_CODE" > smoke-result.txt
+            echo "launch_code=$LAUNCH_CODE" >> smoke-result.txt
+            echo "pid_code=$PID_CODE" >> smoke-result.txt
+            cat install-output.txt >> smoke-result.txt
+            cat launch-output.txt >> smoke-result.txt
+            cat pid.txt >> smoke-result.txt
+            if [ "$INSTALL_CODE" -ne 0 ] || [ "$LAUNCH_CODE" -ne 0 ]; then
+              echo "Install or explicit activity launch failed" >> smoke-result.txt
+              exit 1
+            fi
+            if grep -E "FATAL EXCEPTION|Unable to start activity|Process: ru.demo.voice.*has died" emulator-logcat.txt; then
+              echo "Application crashed during launch" >> smoke-result.txt
+              exit 1
+            fi
+            if [ "$PID_CODE" -ne 0 ]; then
+              echo "Application process is not alive after launch" >> smoke-result.txt
+              exit 1
+            fi
+            exit 0
+
+      - name: Upload APK artifacts and smoke-test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_VOICE_V2_APKS
+          path: |
+            DEMO_VOICE_V2_DEBUG.apk
+            DEMO_VOICE_V2_RELEASE_UNSIGNED.apk
+            SHA256SUMS.txt
+            badging.txt
+            apk_contents.txt
+            emulator-logcat.txt
+            activity-state.txt
+            activity-all.txt
+            install-output.txt
+            launch-output.txt
+            pid.txt
+            smoke-result.txt
+          if-no-files-found: warn
+          retention-days: 14

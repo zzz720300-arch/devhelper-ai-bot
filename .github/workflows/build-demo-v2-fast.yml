@@ -1,0 +1,60 @@
+name: Build Demo Voice v2 fast artifact
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-v2-source.*.txt | base64 -d > source.tar.gz
+          tar -xzf source.tar.gz
+          test -f demo_voice_app_v2/app/src/main/java/ru/demo/voice/MainActivity.java
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          gradle -p demo_voice_app_v2 clean :app:assembleDebug :app:assembleRelease --stacktrace
+          cp demo_voice_app_v2/app/build/outputs/apk/debug/app-debug.apk DEMO_VOICE_V2_DEBUG.apk
+          cp demo_voice_app_v2/app/build/outputs/apk/release/app-release-unsigned.apk DEMO_VOICE_V2_RELEASE_UNSIGNED.apk
+          unzip -t DEMO_VOICE_V2_DEBUG.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging DEMO_VOICE_V2_DEBUG.apk > badging.txt
+          grep -q "package: name='ru.demo.voice'" badging.txt
+          grep -q "application-label:'Демо'" badging.txt
+          unzip -l DEMO_VOICE_V2_DEBUG.apk > apk_contents.txt
+          grep -q "assets/prompts/default_role_prompt.txt" apk_contents.txt
+          grep -q "res/raw/video_01.mp4" apk_contents.txt
+          sha256sum DEMO_VOICE_V2_DEBUG.apk DEMO_VOICE_V2_RELEASE_UNSIGNED.apk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_VOICE_V2_FAST_APKS
+          path: |
+            DEMO_VOICE_V2_DEBUG.apk
+            DEMO_VOICE_V2_RELEASE_UNSIGNED.apk
+            SHA256SUMS.txt
+            badging.txt
+            apk_contents.txt
+          if-no-files-found: error
+          retention-days: 14

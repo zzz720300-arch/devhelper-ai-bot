@@ -1,0 +1,78 @@
+name: Build Demo Voice v3 embedded key
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and patch source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-v2-source.*.txt | base64 -d > demo-v2-source.tar.gz
+          tar -xzf demo-v2-source.tar.gz
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('demo_voice_app_v2/app/src/main/java/ru/demo/voice/MainActivity.java')
+          s = p.read_text(encoding='utf-8')
+          key = 'sk-cpTL5ClSNYRrhzk_l7dr8-9K2JpPceVd'
+          marker = '    private static final String KEY_HINT_SHOWN = "hint_shown";\n'
+          if 'EMBEDDED_ROUTERAI_KEY' not in s:
+              s = s.replace(marker, marker + '    private static final String EMBEDDED_ROUTERAI_KEY = "' + key + '";\n')
+          start = s.index('    private String resolveApiKey() {')
+          end = s.index('\n    private void showApiKeyDialog()', start)
+          s = s[:start] + '    private String resolveApiKey() {\n        return EMBEDDED_ROUTERAI_KEY;\n    }\n' + s[end:]
+          s = s.replace('Выберите папку Demo_Ready с ролью, ключом и видео', 'Выберите папку Demo_Ready с ролью и видео')
+          s = s.replace('                configFolder.createTextIfMissing(PromptManager.KEY_FILE,\n                        "ВСТАВЬТЕ_СЮДА_КЛЮЧ_ROUTERAI");\n', '')
+          p.write_text(s, encoding='utf-8')
+
+          g = Path('demo_voice_app_v2/app/build.gradle')
+          t = g.read_text(encoding='utf-8')
+          t = t.replace('versionCode 2', 'versionCode 3').replace("versionName '1.1.0'", "versionName '1.2.0'")
+          g.write_text(t, encoding='utf-8')
+          PY
+          grep -q 'EMBEDDED_ROUTERAI_KEY' demo_voice_app_v2/app/src/main/java/ru/demo/voice/MainActivity.java
+          ! grep -q 'ВСТАВЬТЕ_СЮДА_КЛЮЧ_ROUTERAI' demo_voice_app_v2/app/src/main/java/ru/demo/voice/MainActivity.java
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - uses: android-actions/setup-android@v3
+      - name: Build and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          gradle -p demo_voice_app_v2 clean :app:assembleDebug --stacktrace
+          cp demo_voice_app_v2/app/build/outputs/apk/debug/app-debug.apk Demo_Voice_1.2.0.apk
+          unzip -t Demo_Voice_1.2.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.2.0.apk > badging.txt
+          grep -q "package: name='ru.demo.voice'" badging.txt
+          grep -q "versionName='1.2.0'" badging.txt
+          grep -q "application-label:'Демо'" badging.txt
+          strings Demo_Voice_1.2.0.apk | grep -q 'sk-cpTL5ClSNYRrhzk_l7dr8-9K2JpPceVd' || true
+          sha256sum Demo_Voice_1.2.0.apk > Demo_Voice_1.2.0.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_VOICE_1_2_0
+          path: |
+            Demo_Voice_1.2.0.apk
+            Demo_Voice_1.2.0.sha256
+            badging.txt
+          retention-days: 14
