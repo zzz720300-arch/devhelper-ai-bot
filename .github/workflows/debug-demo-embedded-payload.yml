@@ -1,0 +1,44 @@
+name: Debug Demo embedded payload
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diagnose payload
+        shell: bash
+        run: |
+          set +e
+          cat payload/demo-embedded-template.part.* > combined.b64
+          {
+            echo 'files:'
+            ls -l payload/demo-embedded-template.part.*
+            echo 'combined:'
+            wc -c combined.b64
+            sha256sum combined.b64
+          } > diagnostic.txt
+          base64 -d combined.b64 > decoded.tar.gz 2>> diagnostic.txt
+          echo "base64_exit=$?" >> diagnostic.txt
+          ls -l decoded.tar.gz >> diagnostic.txt
+          sha256sum decoded.tar.gz >> diagnostic.txt
+          tar -tzf decoded.tar.gz > tar-list.txt 2>> diagnostic.txt
+          echo "tar_exit=$?" >> diagnostic.txt
+          cat diagnostic.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DEMO_EMBEDDED_PAYLOAD_DIAGNOSTIC
+          path: |
+            combined.b64
+            decoded.tar.gz
+            diagnostic.txt
+            tar-list.txt
+          retention-days: 7
