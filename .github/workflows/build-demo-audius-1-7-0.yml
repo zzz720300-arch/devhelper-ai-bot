@@ -3,25 +3,33 @@ name: Build Demo Audius 1.7.0
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'build_output_audius/**'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
 
 jobs:
   build:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 1
 
       - name: Restore 1.5 base and apply Audius patch
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf build_output_audius demo_rutube_src
+          mkdir -p build_output_audius
           cat payload/demo-rutube-source.part.* > demo-rutube-source.b64
           echo '9b57b96e56bd55b78ebfecf39197af53a1318420c6f757576475b51acd34354a  demo-rutube-source.b64' | sha256sum -c -
           base64 -d demo-rutube-source.b64 > demo-rutube-source.tar.gz
@@ -30,8 +38,7 @@ jobs:
 
           APP=demo_rutube_src/app/src/main
           JAVA=$APP/java/ru/demo/voice
-          rm -f "$JAVA/RutubeMusicController.java"
-          rm -f "$APP/assets/videos/video_10.mp4"
+          rm -f "$JAVA/RutubeMusicController.java" "$APP/assets/videos/video_10.mp4"
           cp audius_patch/MainActivity.java "$JAVA/MainActivity.java"
           cp audius_patch/AudiusMusicController.java "$JAVA/AudiusMusicController.java"
           cp audius_patch/PromptManager.java "$JAVA/PromptManager.java"
@@ -50,14 +57,15 @@ jobs:
           ! grep -Rin --include='*.java' --include='AndroidManifest.xml' 'rutube' "$APP"
           grep -q 'AudiusMusicController' "$JAVA/MainActivity.java"
           grep -q "versionName '1.7.0'" demo_rutube_src/app/build.gradle
+          echo RESTORE_OK > build_output_audius/restore-status.txt
 
       - name: Smoke-test Audius search and stream
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
+          set -o pipefail
+          python3 - <<'PY' 2>&1 | tee build_output_audius/audius-smoke.txt
           import json, urllib.parse, urllib.request
-
           headers = {'User-Agent': 'DemoVoice-CI/1.7', 'Accept': 'application/json'}
           selected = None
           for query in ('house of the rising sun', 'rock cover', 'electronic music'):
@@ -105,39 +113,55 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Build and verify release APK
+        id: apkbuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+            gradle -p demo_rutube_src clean :app:assembleRelease --stacktrace
+            cp demo_rutube_src/app/build/outputs/apk/release/app-release.apk Demo_Voice_1.7.0.apk
+            unzip -t Demo_Voice_1.7.0.apk
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.7.0.apk > badging.txt
+            grep -q "package: name='ru.demo.voice'" badging.txt
+            grep -q "versionName='1.7.0'" badging.txt
+            grep -q "application-label:'Демо'" badging.txt
+            unzip -l Demo_Voice_1.7.0.apk > contents.txt
+            for n in $(seq -w 1 9); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
+            ! grep -q 'assets/videos/video_10.mp4' contents.txt
+            grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
+            grep -q 'assets/config/routerai_key.txt' contents.txt
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Demo_Voice_1.7.0.apk > certs.txt
+            tr -d ': ' < certs.txt | tr '[:upper:]' '[:lower:]' > certs-normalized.txt
+            grep -q '95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf' certs-normalized.txt
+            sha256sum Demo_Voice_1.7.0.apk > Demo_Voice_1.7.0.sha256
+          } > build_output_audius/build.log 2>&1
+          status=$?
+          echo "$status" > build_output_audius/build-exit-code.txt
+          if [ "$status" -eq 0 ]; then
+            cp Demo_Voice_1.7.0.sha256 badging.txt contents.txt certs.txt build_output_audius/
+            base64 -w0 Demo_Voice_1.7.0.apk > build_output_audius/Demo_Voice_1.7.0.apk.b64
+            split -b 800000 -d -a 2 build_output_audius/Demo_Voice_1.7.0.apk.b64 build_output_audius/Demo_Voice_1.7.0.apk.b64.part.
+            rm build_output_audius/Demo_Voice_1.7.0.apk.b64
+            echo SUCCESS > build_output_audius/STATUS.txt
+          else
+            echo FAILURE > build_output_audius/STATUS.txt
+          fi
+          exit "$status"
+
+      - name: Publish CI result to build branch
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          gradle -p demo_rutube_src clean :app:assembleRelease --stacktrace
-          cp demo_rutube_src/app/build/outputs/apk/release/app-release.apk Demo_Voice_1.7.0.apk
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -f build_output_audius
+          git commit -m "CI result: Demo Audius 1.7.0 [skip ci]" || true
+          git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
 
-          unzip -t Demo_Voice_1.7.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.7.0.apk > badging.txt
-          grep -q "package: name='ru.demo.voice'" badging.txt
-          grep -q "versionName='1.7.0'" badging.txt
-          grep -q "application-label:'Демо'" badging.txt
-
-          unzip -l Demo_Voice_1.7.0.apk > contents.txt
-          for n in $(seq -w 1 9); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
-          ! grep -q 'assets/videos/video_10.mp4' contents.txt
-          grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
-          grep -q 'assets/config/routerai_key.txt' contents.txt
-
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Demo_Voice_1.7.0.apk > certs.txt
-          tr -d ': ' < certs.txt | tr '[:upper:]' '[:lower:]' > certs-normalized.txt
-          grep -q '95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf' certs-normalized.txt
-
-          sha256sum Demo_Voice_1.7.0.apk > Demo_Voice_1.7.0.sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: DEMO_AUDIUS_1_7_0
-          path: |
-            Demo_Voice_1.7.0.apk
-            Demo_Voice_1.7.0.sha256
-            badging.txt
-            contents.txt
-            certs.txt
-          retention-days: 14
+      - name: Fail job when APK build failed
+        if: steps.apkbuild.outcome == 'failure'
+        run: exit 1
