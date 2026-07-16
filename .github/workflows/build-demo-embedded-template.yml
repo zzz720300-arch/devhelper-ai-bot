@@ -22,7 +22,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat payload/demo-embedded-template.part.* | base64 -d > demo-template.tar.gz
+          cat payload/demo-embedded-template.part.* > demo-template.b64
+          sed -i 's#/triuR/A#/truR/A#' demo-template.b64
+          echo '683bb8609388830f4b199105437b78091976c7be491f3547a1f5fe445ab10388  demo-template.b64' | sha256sum -c -
+          base64 -d demo-template.b64 > demo-template.tar.gz
           tar -xzf demo-template.tar.gz
           test -f demo_template/app/src/main/java/ru/demo/voice/MainActivity.java
           test -f demo_template/app/src/main/assets/videos/video_03.mp4
