@@ -28,8 +28,48 @@ jobs:
           base64 -d demo-template.b64 > demo-template.tar.gz
           tar -xzf demo-template.tar.gz
           test -f demo_template/app/src/main/java/ru/demo/voice/MainActivity.java
+          test -f demo_template/app/src/main/java/ru/demo/voice/VideoLooper.java
           test -f demo_template/app/src/main/assets/videos/video_03.mp4
           test -f demo_template/app/src/main/assets/config/routerai_key.txt
+
+      - name: Remove forced video enlargement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('demo_template/app/src/main/java/ru/demo/voice/VideoLooper.java')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('import android.graphics.Matrix;\n', '')
+          s = re.sub(
+              r'\s*newPlayer\.setOnVideoSizeChangedListener\(\(mp, width, height\) ->\s*applyCenterCrop\(width, height\)\);',
+              '', s, flags=re.S)
+          s = re.sub(
+              r'newPlayer\.setOnPreparedListener\(mp -> \{\s*applyCenterCrop\(mp\.getVideoWidth\(\), mp\.getVideoHeight\(\)\);\s*mp\.start\(\);\s*\}\);',
+              'newPlayer.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);\n            newPlayer.setOnPreparedListener(mp -> {\n                textureView.setTransform(null);\n                mp.start();\n            });',
+              s, flags=re.S)
+          start = s.find('    private void applyCenterCrop(')
+          if start != -1:
+              end = s.find('    private void releasePlayer()', start)
+              if end == -1:
+                  raise RuntimeError('releasePlayer not found')
+              s = s[:start] + s[end:]
+          s = re.sub(
+              r'public void onSurfaceTextureSizeChanged\(SurfaceTexture surfaceTexture, int width, int height\) \{.*?\n\s*\}',
+              'public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {\n        textureView.setTransform(null);\n    }',
+              s, flags=re.S)
+          p.write_text(s, encoding='utf-8')
+
+          b = Path('demo_template/app/build.gradle')
+          t = b.read_text(encoding='utf-8')
+          t = re.sub(r'versionCode\s+\d+', 'versionCode 6', t)
+          t = re.sub(r"versionName\s+'[^']+'", "versionName '1.4.1'", t)
+          b.write_text(t, encoding='utf-8')
+          PY
+          grep -q 'VIDEO_SCALING_MODE_SCALE_TO_FIT' demo_template/app/src/main/java/ru/demo/voice/VideoLooper.java
+          ! grep -q 'applyCenterCrop' demo_template/app/src/main/java/ru/demo/voice/VideoLooper.java
 
       - uses: actions/setup-java@v4
         with:
@@ -49,26 +89,26 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
           gradle -p demo_template clean :app:assembleDebug --stacktrace
-          cp demo_template/app/build/outputs/apk/debug/app-debug.apk Demo_Embedded_Template_1.4.0.apk
-          unzip -t Demo_Embedded_Template_1.4.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Embedded_Template_1.4.0.apk > badging.txt
+          cp demo_template/app/build/outputs/apk/debug/app-debug.apk Demo_Voice_1.4.1.apk
+          unzip -t Demo_Voice_1.4.1.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.4.1.apk > badging.txt
           grep -q "package: name='ru.demo.voice'" badging.txt
-          grep -q "versionName='1.4.0'" badging.txt
+          grep -q "versionName='1.4.1'" badging.txt
           grep -q "application-label:'Демо'" badging.txt
-          unzip -l Demo_Embedded_Template_1.4.0.apk > contents.txt
+          unzip -l Demo_Voice_1.4.1.apk > contents.txt
           grep -q 'assets/videos/video_01.mp4' contents.txt
           grep -q 'assets/videos/video_02.mp4' contents.txt
           grep -q 'assets/videos/video_03.mp4' contents.txt
           grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
           grep -q 'assets/config/routerai_key.txt' contents.txt
-          sha256sum Demo_Embedded_Template_1.4.0.apk > Demo_Embedded_Template_1.4.0.sha256
+          sha256sum Demo_Voice_1.4.1.apk > Demo_Voice_1.4.1.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DEMO_EMBEDDED_TEMPLATE_1_4_0
+          name: DEMO_VIDEO_FIT_1_4_1
           path: |
-            Demo_Embedded_Template_1.4.0.apk
-            Demo_Embedded_Template_1.4.0.sha256
+            Demo_Voice_1.4.1.apk
+            Demo_Voice_1.4.1.sha256
             badging.txt
             contents.txt
           retention-days: 14
