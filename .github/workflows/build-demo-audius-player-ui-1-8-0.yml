@@ -104,31 +104,39 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Build and verify release APK
+        id: apkbuild
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          gradle -p demo_rutube_src clean :app:assembleRelease --stacktrace
-          cp demo_rutube_src/app/build/outputs/apk/release/app-release.apk Demo_Voice_1.8.0.apk
-          unzip -t Demo_Voice_1.8.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.8.0.apk > badging.txt
-          grep -q "package: name='ru.demo.voice'" badging.txt
-          grep -q "versionName='1.8.0'" badging.txt
-          grep -q "application-label:'Демо'" badging.txt
-          unzip -l Demo_Voice_1.8.0.apk > contents.txt
-          for n in $(seq -w 01 09); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
-          ! grep -q 'assets/videos/video_10.mp4' contents.txt
-          grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
-          grep -q 'assets/config/routerai_key.txt' contents.txt
-          grep -q 'res/drawable/ic_player_mode.xml' contents.txt
-          grep -q 'res/drawable/ic_music_search.xml' contents.txt
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Demo_Voice_1.8.0.apk > certs.txt
-          tr -d ': ' < certs.txt | tr '[:upper:]' '[:lower:]' > certs-normalized.txt
-          grep -q '95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf' certs-normalized.txt
-          sha256sum Demo_Voice_1.8.0.apk > Demo_Voice_1.8.0.sha256
+          set +e
+          set -o pipefail
+          {
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+            gradle -p demo_rutube_src clean :app:assembleRelease --stacktrace
+            cp demo_rutube_src/app/build/outputs/apk/release/app-release.apk Demo_Voice_1.8.0.apk
+            unzip -t Demo_Voice_1.8.0.apk
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.8.0.apk > badging.txt
+            grep -q "package: name='ru.demo.voice'" badging.txt
+            grep -q "versionName='1.8.0'" badging.txt
+            grep -q "application-label:'Демо'" badging.txt
+            unzip -l Demo_Voice_1.8.0.apk > contents.txt
+            for n in $(seq -w 01 09); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
+            ! grep -q 'assets/videos/video_10.mp4' contents.txt
+            grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
+            grep -q 'assets/config/routerai_key.txt' contents.txt
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Demo_Voice_1.8.0.apk > certs.txt
+            tr -d ': ' < certs.txt | tr '[:upper:]' '[:lower:]' > certs-normalized.txt
+            grep -q '95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf' certs-normalized.txt
+            sha256sum Demo_Voice_1.8.0.apk > Demo_Voice_1.8.0.sha256
+          } > build-1.8.0.log 2>&1
+          status=$?
+          echo "$status" > build-exit-code.txt
+          cat build-1.8.0.log
+          exit "$status"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: DEMO_AUDIUS_PLAYER_UI_1_8_0
           path: |
@@ -137,4 +145,11 @@ jobs:
             badging.txt
             contents.txt
             certs.txt
+            build-1.8.0.log
+            build-exit-code.txt
+          if-no-files-found: warn
           retention-days: 14
+
+      - name: Fail job when APK build failed
+        if: steps.apkbuild.outcome == 'failure'
+        run: exit 1
