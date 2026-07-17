@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ru.demo.voice'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ru.demo.voice'
+        minSdk 26
+        targetSdk 35
+        versionCode 10
+        versionName '1.7.0'
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file('signing/demo-release.keystore')
+            storePassword 'DemoVoice2026!'
+            keyAlias 'demo'
+            keyPassword 'DemoVoice2026!'
+            enableV1Signing true
+            enableV2Signing true
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE', 'META-INF/NOTICE.txt']
+        }
+    }
+}

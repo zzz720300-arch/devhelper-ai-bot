@@ -1,0 +1,45 @@
+name: Export Demo Audius 1.7.0
+
+on:
+  push:
+    branches: [demo-audius-1-7-0-20260717]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: demo-audius-1-7-0-20260717
+          fetch-depth: 1
+
+      - name: Reconstruct and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat build_output_audius/STATUS.txt)" = SUCCESS
+          cat build_output_audius/Demo_Voice_1.7.0.apk.b64.part.* | base64 -d > Demo_Voice_1.7.0.apk
+          sha256sum -c build_output_audius/Demo_Voice_1.7.0.sha256
+          cp build_output_audius/Demo_Voice_1.7.0.sha256 .
+          unzip -t Demo_Voice_1.7.0.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DEMO_AUDIUS_1_7_0
+          path: |
+            Demo_Voice_1.7.0.apk
+            Demo_Voice_1.7.0.sha256
+            build_output_audius/badging.txt
+            build_output_audius/contents.txt
+            build_output_audius/certs.txt
+            build_output_audius/audius-smoke.txt
+          retention-days: 14
+          compression-level: 0
