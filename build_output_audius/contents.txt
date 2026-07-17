@@ -1,0 +1,37 @@
+Archive:  Demo_Voice_1.7.0.apk
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+       56  1981-01-01 01:01   META-INF/com/android/build/gradle/app-metadata.properties
+       46  1981-01-01 01:01   META-INF/version-control-info.textproto
+    56840  1981-01-01 01:01   classes.dex
+       25  1981-01-01 01:01   assets/config/routerai_key.txt
+     3019  1981-01-01 01:01   assets/prompts/01_CORE_SYSTEM_PROMPT.txt
+      687  1981-01-01 01:01   assets/prompts/03_RUNTIME_SESSION_PROMPT.txt
+      565  1981-01-01 01:01   assets/prompts/default_role_prompt.txt
+     5344  1981-01-01 01:01   assets/videos/video_01.mp4
+     5344  1981-01-01 01:01   assets/videos/video_02.mp4
+     5344  1981-01-01 01:01   assets/videos/video_03.mp4
+     5344  1981-01-01 01:01   assets/videos/video_04.mp4
+     5344  1981-01-01 01:01   assets/videos/video_05.mp4
+     5344  1981-01-01 01:01   assets/videos/video_06.mp4
+     5344  1981-01-01 01:01   assets/videos/video_07.mp4
+     5344  1981-01-01 01:01   assets/videos/video_08.mp4
+     5344  1981-01-01 01:01   assets/videos/video_09.mp4
+     3312  1981-01-01 01:01   AndroidManifest.xml
+      924  1981-01-01 01:01   res/1g.xml
+      212  1981-01-01 01:01   res/9w.png
+      748  1981-01-01 01:01   res/FN.xml
+      307  1981-01-01 01:01   res/FS.png
+      748  1981-01-01 01:01   res/Fc.xml
+      572  1981-01-01 01:01   res/MM.xml
+      788  1981-01-01 01:01   res/Pi.xml
+      419  1981-01-01 01:01   res/RJ.png
+     5344  1981-01-01 01:01   res/kT.mp4
+      536  1981-01-01 01:01   res/o-.png
+      259  1981-01-01 01:01   res/yn.png
+     2280  1981-01-01 01:01   resources.arsc
+     2880  1981-01-01 01:01   META-INF/CERT.SF
+     1700  1981-01-01 01:01   META-INF/CERT.RSA
+     2806  1981-01-01 01:01   META-INF/MANIFEST.MF
+---------                     -------
+   133169                     32 files

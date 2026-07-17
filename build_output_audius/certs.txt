@@ -1,0 +1,17 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): false
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=Demo Voice, OU=Personal, O=Demo, L=Tallinn, C=EE
+Signer #1 certificate SHA-256 digest: 95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf
+Signer #1 certificate SHA-1 digest: 39239ab27305449a14aebaaee8a1a6f5c539910c
+Signer #1 certificate MD5 digest: 7b9d96fe1c47ceb3214eff2115a786fe
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 3072
+Signer #1 public key SHA-256 digest: 5c39c5ca3ea06b398cb0adb741144e719a2ea9020f7207e23dd271ea774b6709
+Signer #1 public key SHA-1 digest: 634043e5209046209afa384b662a1e5db8fc85c4
+Signer #1 public key MD5 digest: 9ad8e78bfd3f8c28eadd7bceba84d980
