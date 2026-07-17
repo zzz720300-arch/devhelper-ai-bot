@@ -3,6 +3,8 @@ name: Export Demo Audius 1.7.0
 on:
   push:
     branches: [demo-audius-1-7-0-20260717]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
