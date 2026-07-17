@@ -3,6 +3,8 @@ name: Build Demo Audius Player UI 1.8.0
 on:
   push:
     branches: [demo-audius-player-ui-1-8-0-20260717]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
