@@ -1,0 +1,111 @@
+yes: standard output: Broken pipe
+Loading package information...                                                  Loading local repository...                                                     [                                       ] 3% Loading local repository...        [                                       ] 3% Fetch remote repository...         [=                                      ] 3% Fetch remote repository...         [=                                      ] 4% Fetch remote repository...         [=                                      ] 5% Fetch remote repository...         [==                                     ] 5% Fetch remote repository...         [==                                     ] 6% Fetch remote repository...         [==                                     ] 7% Fetch remote repository...         [==                                     ] 7% Computing updates...               [===                                    ] 8% Computing updates...               [===                                    ] 10% Computing updates...              [=======================================] 100% Computing updates...             
+
+
+Welcome to Gradle 8.10.2!
+
+Here are the highlights of this release:
+ - Support for Java 23
+ - Faster configuration cache
+ - Better configuration cache reports
+
+For more details see https://docs.gradle.org/8.10.2/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:clean UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:generateReleaseResValues
+> Task :app:checkReleaseAarMetadata
+> Task :app:javaPreCompileRelease
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:mergeReleaseResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:parseReleaseLocalResources
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:extractProguardFiles
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:mergeReleaseNativeLibs NO-SOURCE
+> Task :app:stripReleaseDebugSymbols NO-SOURCE
+> Task :app:extractReleaseNativeSymbolTables NO-SOURCE
+> Task :app:processReleaseManifestForPackage
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:desugarReleaseFileDependencies
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:mergeReleaseStartupProfile
+> Task :app:mergeExtDexRelease
+> Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:processReleaseResources
+> Task :app:extractReleaseVersionControlInfo
+
+> Task :app:compileReleaseJavaWithJavac
+Note: /home/runner/work/devhelper-ai-bot/devhelper-ai-bot/demo_rutube_src/app/src/main/java/ru/demo/voice/MainActivity.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:dexBuilderRelease
+> Task :app:processReleaseJavaRes NO-SOURCE
+> Task :app:mergeReleaseGlobalSynthetics
+> Task :app:mergeReleaseJavaResource
+> Task :app:collectReleaseDependencies
+> Task :app:optimizeReleaseResources
+> Task :app:mergeDexRelease
+> Task :app:sdkReleaseDependencyData
+> Task :app:compileReleaseArtProfile
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease
+> Task :app:lintVitalRelease
+> Task :app:assembleRelease
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/apkbuild-1784246450797.json
+
+BUILD SUCCESSFUL in 51s
+44 actionable tasks: 43 executed, 1 up-to-date
+Archive:  Demo_Voice_1.7.0.apk
+    testing: META-INF/com/android/build/gradle/app-metadata.properties   OK
+    testing: META-INF/version-control-info.textproto   OK
+    testing: classes.dex              OK
+    testing: assets/config/routerai_key.txt   OK
+    testing: assets/prompts/01_CORE_SYSTEM_PROMPT.txt   OK
+    testing: assets/prompts/03_RUNTIME_SESSION_PROMPT.txt   OK
+    testing: assets/prompts/default_role_prompt.txt   OK
+    testing: assets/videos/video_01.mp4   OK
+    testing: assets/videos/video_02.mp4   OK
+    testing: assets/videos/video_03.mp4   OK
+    testing: assets/videos/video_04.mp4   OK
+    testing: assets/videos/video_05.mp4   OK
+    testing: assets/videos/video_06.mp4   OK
+    testing: assets/videos/video_07.mp4   OK
+    testing: assets/videos/video_08.mp4   OK
+    testing: assets/videos/video_09.mp4   OK
+    testing: AndroidManifest.xml      OK
+    testing: res/1g.xml               OK
+    testing: res/9w.png               OK
+    testing: res/FN.xml               OK
+    testing: res/FS.png               OK
+    testing: res/Fc.xml               OK
+    testing: res/MM.xml               OK
+    testing: res/Pi.xml               OK
+    testing: res/RJ.png               OK
+    testing: res/kT.mp4               OK
+    testing: res/o-.png               OK
+    testing: res/yn.png               OK
+    testing: resources.arsc           OK
+    testing: META-INF/CERT.SF         OK
+    testing: META-INF/CERT.RSA        OK
+    testing: META-INF/MANIFEST.MF     OK
+No errors detected in compressed data of Demo_Voice_1.7.0.apk.

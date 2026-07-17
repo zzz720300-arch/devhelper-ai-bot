@@ -1,0 +1,30 @@
+name: Export Apktool CLI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Apktool CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 -o apktool.jar https://repo1.maven.org/maven2/org/apktool/apktool-cli/2.11.1/apktool-cli-2.11.1.jar
+          test -s apktool.jar
+          java -jar apktool.jar --version
+          sha256sum apktool.jar > apktool.jar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: APKTOOL_CLI_2_11_1
+          path: |
+            apktool.jar
+            apktool.jar.sha256
+          retention-days: 7

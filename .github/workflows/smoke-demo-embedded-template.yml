@@ -1,0 +1,79 @@
+name: Smoke-test Demo embedded template
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-embedded-template.part.* > demo-template.b64
+          sed -i 's#/triuR/A#/truR/A#' demo-template.b64
+          echo '683bb8609388830f4b199105437b78091976c7be491f3547a1f5fe445ab10388  demo-template.b64' | sha256sum -c -
+          base64 -d demo-template.b64 > demo-template.tar.gz
+          tar -xzf demo-template.tar.gz
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" "emulator" "system-images;android-29;google_apis;x86_64"
+          gradle -p demo_template clean :app:assembleDebug --stacktrace
+          cp demo_template/app/build/outputs/apk/debug/app-debug.apk Demo_Embedded_Template.apk
+      - name: Launch and test arrows
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            adb install -r Demo_Embedded_Template.apk
+            adb logcat -c
+            adb shell am start -W -n ru.demo.voice/.MainActivity
+            sleep 6
+            adb shell pidof ru.demo.voice
+            adb shell input tap 740 1780
+            sleep 2
+            adb shell run-as ru.demo.voice cat shared_prefs/demo_settings.xml > prefs-right.xml
+            grep -q 'name="video_slot" value="2"' prefs-right.xml
+            adb shell input tap 340 1780
+            sleep 2
+            adb shell run-as ru.demo.voice cat shared_prefs/demo_settings.xml > prefs-left.xml
+            grep -q 'name="video_slot" value="1"' prefs-left.xml
+            adb logcat -d > smoke-logcat.txt
+            if grep -E 'FATAL EXCEPTION|Unable to start activity|Process: ru.demo.voice.*has died' smoke-logcat.txt; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DEMO_EMBEDDED_SMOKE_LOGS
+          path: |
+            prefs-right.xml
+            prefs-left.xml
+            smoke-logcat.txt
+          if-no-files-found: ignore
+          retention-days: 7

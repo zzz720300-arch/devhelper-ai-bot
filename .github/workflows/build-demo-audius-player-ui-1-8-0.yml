@@ -1,0 +1,155 @@
+name: Build Demo Audius Player UI 1.8.0
+
+on:
+  push:
+    branches: [demo-audius-player-ui-1-8-0-20260717]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore working app and apply dedicated player UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/demo-rutube-source.part.* > demo-rutube-source.b64
+          echo '9b57b96e56bd55b78ebfecf39197af53a1318420c6f757576475b51acd34354a  demo-rutube-source.b64' | sha256sum -c -
+          base64 -d demo-rutube-source.b64 > demo-rutube-source.tar.gz
+          echo '8d770d9584d27409de884d86396f26916699006a9ec79b499d33847c4dfd1ae6  demo-rutube-source.tar.gz' | sha256sum -c -
+          tar -xzf demo-rutube-source.tar.gz
+
+          APP=demo_rutube_src/app/src/main
+          JAVA=$APP/java/ru/demo/voice
+          rm -f "$JAVA/RutubeMusicController.java" "$APP/assets/videos/video_10.mp4"
+          cp audius_patch/MainActivity.java "$JAVA/MainActivity.java"
+          cp audius_patch/AudiusMusicController.java "$JAVA/AudiusMusicController.java"
+          cp audius_patch/PromptManager.java "$JAVA/PromptManager.java"
+          cp audius_patch/VideoLooper.java "$JAVA/VideoLooper.java"
+          cp audius_patch/AndroidManifest.xml "$APP/AndroidManifest.xml"
+          cp audius_patch/app-build.gradle demo_rutube_src/app/build.gradle
+
+          mkdir -p demo_rutube_src/signing
+          base64 -d audius_patch/demo-release.keystore.b64 > demo_rutube_src/signing/demo-release.keystore
+          echo '3e48e68642a3bd284d52a15b37043eb22a3abc233c34425c733acb759b617a7a  demo_rutube_src/signing/demo-release.keystore' | sha256sum -c -
+
+          python3 player_ui_patch/apply_player_ui_patch.py
+
+          for n in $(seq -w 01 09); do test -s "$APP/assets/videos/video_${n}.mp4"; done
+          test ! -e "$APP/assets/videos/video_10.mp4"
+          test -s "$APP/assets/prompts/default_role_prompt.txt"
+          test -s "$APP/assets/config/routerai_key.txt"
+          ! grep -Rin --include='*.java' --include='AndroidManifest.xml' 'rutube' "$APP"
+          grep -q 'playerModeButton' "$JAVA/MainActivity.java"
+          grep -q 'startMusicSearchListening' "$JAVA/MainActivity.java"
+          grep -q 'moveTaskToBack(true)' "$JAVA/MainActivity.java"
+          grep -q 'void previous()' "$JAVA/AudiusMusicController.java"
+          grep -q "versionName '1.8.0'" demo_rutube_src/app/build.gradle
+
+      - name: Smoke-test Audius search and stream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.parse, urllib.request
+          headers = {'User-Agent': 'DemoVoice-CI/1.8', 'Accept': 'application/json'}
+          url = 'https://api.audius.co/v1/tracks/search?' + urllib.parse.urlencode({
+              'query': 'house of the rising sun', 'limit': 20, 'sort_method': 'popular'
+          })
+          with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+              items = json.load(response).get('data') or []
+          selected = None
+          for item in items:
+              access = item.get('access') or {}
+              if not item.get('id'):
+                  continue
+              if item.get('is_streamable') is False or item.get('is_stream_gated') is True:
+                  continue
+              if access.get('stream') is False:
+                  continue
+              selected = item
+              break
+          if not selected:
+              raise SystemExit('No streamable Audius track found')
+          track_id = urllib.parse.quote(str(selected['id']), safe='')
+          stream = f'https://api.audius.co/v1/tracks/{track_id}/stream?app_name=DemoVoice'
+          req = urllib.request.Request(stream, headers={'User-Agent': 'DemoVoice-CI/1.8', 'Range': 'bytes=0-4095'})
+          with urllib.request.urlopen(req, timeout=45) as response:
+              chunk = response.read(4096)
+          if len(chunk) < 1024:
+              raise SystemExit(f'Audius stream too short: {len(chunk)}')
+          print('Audius smoke test OK:', selected.get('title'), len(chunk))
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build and verify release APK
+        id: apkbuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          {
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+            gradle -p demo_rutube_src clean :app:assembleRelease --stacktrace
+            cp demo_rutube_src/app/build/outputs/apk/release/app-release.apk Demo_Voice_1.8.0.apk
+            unzip -t Demo_Voice_1.8.0.apk
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Demo_Voice_1.8.0.apk > badging.txt
+            grep -q "package: name='ru.demo.voice'" badging.txt
+            grep -q "versionName='1.8.0'" badging.txt
+            grep -q "application-label:'Демо'" badging.txt
+            unzip -l Demo_Voice_1.8.0.apk > contents.txt
+            for n in $(seq -w 01 09); do grep -q "assets/videos/video_${n}.mp4" contents.txt; done
+            ! grep -q 'assets/videos/video_10.mp4' contents.txt
+            grep -q 'assets/prompts/default_role_prompt.txt' contents.txt
+            grep -q 'assets/config/routerai_key.txt' contents.txt
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Demo_Voice_1.8.0.apk > certs.txt
+            tr -d ': ' < certs.txt | tr '[:upper:]' '[:lower:]' > certs-normalized.txt
+            grep -q '95aef43896f26f257bd616ed9d1c78fe7d01edbeceb5bba6858d5055be1acbbf' certs-normalized.txt
+            sha256sum Demo_Voice_1.8.0.apk > Demo_Voice_1.8.0.sha256
+          } > build-1.8.0.log 2>&1
+          status=$?
+          echo "$status" > build-exit-code.txt
+          cat build-1.8.0.log
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DEMO_AUDIUS_PLAYER_UI_1_8_0
+          path: |
+            Demo_Voice_1.8.0.apk
+            Demo_Voice_1.8.0.sha256
+            badging.txt
+            contents.txt
+            certs.txt
+            build-1.8.0.log
+            build-exit-code.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail job when APK build failed
+        if: steps.apkbuild.outcome == 'failure'
+        run: exit 1
