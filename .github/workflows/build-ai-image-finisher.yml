@@ -51,6 +51,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up official Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -110,8 +115,7 @@ jobs:
         run: |
           set +e
           cd project
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace --console=plain \
+          gradle -p . --no-daemon --stacktrace --console=plain \
             :imagefinisher-sdk:testDebugUnitTest \
             :sample-app:lintRelease \
             :sample-app:assembleRelease \
@@ -167,6 +171,7 @@ jobs:
           AI IMAGE FINISHER 1.0.0 REAL DELIVERY
           ====================================
           JDK: 17
+          Gradle: 8.13 official distribution
           Android compile/target SDK: 36
           Build Tools: 36.1.0
           Functions: resize, local ONNX AI upscale x2/x4, local ONNX background removal, editable SVG vectorization
