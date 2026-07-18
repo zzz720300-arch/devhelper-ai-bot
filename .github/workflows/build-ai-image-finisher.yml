@@ -41,9 +41,9 @@ jobs:
           mv AI_IMAGE_FINISHER_CI_MIN project
           test -f project/gradlew
           test -f project/sample-app/src/main/AndroidManifest.xml
-          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/OnnxSuperResolutionEngine.kt
-          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/OnnxBackgroundRemovalEngine.kt
-          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/KotlinVectorizationEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/OnnxSuperResolutionEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/OnnxBackgroundRemovalEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/KotlinVectorizationEngine.kt
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
