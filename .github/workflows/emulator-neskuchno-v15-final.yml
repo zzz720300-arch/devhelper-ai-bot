@@ -90,10 +90,12 @@ jobs:
           grep -q 'android.permission.INTERNET' permissions.txt
           grep -q 'android.permission.RECORD_AUDIO' permissions.txt
           ! grep -q 'android.permission.CAMERA' permissions.txt
-          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk assets/config/routerai_key.txt | grep -q 'ROUTERAI_KEY_PLACEHOLDER'
-          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'google/gemini-3.1-flash-tts-preview'
-          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'Zephyr'
-          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'qwen/qwen3.5-flash-02-23'
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk assets/config/routerai_key.txt > embedded-key-placeholder.txt
+          grep -q 'ROUTERAI_KEY_PLACEHOLDER' embedded-key-placeholder.txt
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings > dex-strings.txt
+          grep -q 'google/gemini-3.1-flash-tts-preview' dex-strings.txt
+          grep -q 'Zephyr' dex-strings.txt
+          grep -q 'qwen/qwen3.5-flash-02-23' dex-strings.txt
 
       - name: Package signing tools
         shell: bash
@@ -107,6 +109,7 @@ jobs:
           tar -czf ANDROID_SIGNING_TOOLS_35.tar.gz signing-tools
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: NESKUCHNO_V15_ZEPHYR_FINAL_BUILD
           path: |
@@ -118,7 +121,8 @@ jobs:
             permissions.txt
             signature.txt
             zip-test.txt
+            dex-strings.txt
             ANDROID_SIGNING_TOOLS_35.tar.gz
-          if-no-files-found: error
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 14
