@@ -1,0 +1,128 @@
+name: Final V15 Zephyr build
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neskuchno-v15-zephyr-final
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore and patch source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat ci_payload/neskuchno-v15/source.part00 ci_payload/neskuchno-v15/source.part01 ci_payload/neskuchno-v15/source.part02 ci_payload/neskuchno-v15/source.part03 ci_payload/neskuchno-v15/source.part04a ci_payload/neskuchno-v15/source.part04b ci_payload/neskuchno-v15/source.part05 ci_payload/neskuchno-v15/source.part06 ci_payload/neskuchno-v15/source.part07 | tr -d '\r\n ' | base64 -d > source.tar.xz
+          echo 'fbb97de69873202d21ac16955d0babde808302bb39eb304cda3032ea22733080  source.tar.xz' | sha256sum -c -
+          mkdir restored
+          tar -xJf source.tar.xz -C restored
+          ROOT="$(find restored -name settings.gradle.kts -printf '%h\n' | head -n1)"
+          test -n "$ROOT"
+          python3 ci_payload/neskuchno-v15/apply_source_fixes.py "$ROOT"
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Audit requested behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLIENT="$PROJECT_ROOT/app/src/main/java/ru/quantai/neskuchno/RouterAiClient.java"
+          MAIN="$PROJECT_ROOT/app/src/main"
+          grep -q 'generateAbsurdNews' "$CLIENT"
+          grep -q 'chat/completions' "$CLIENT"
+          grep -q 'локальные заготовки запрещены' "$CLIENT"
+          grep -q 'google/gemini-3.1-flash-tts-preview' "$CLIENT"
+          grep -q 'TTS_VOICE = "Zephyr"' "$CLIENT"
+          grep -q 'request.put("response_format", "pcm")' "$CLIENT"
+          grep -q 'writePcm16MonoWav' "$CLIENT"
+          grep -q 'AudioRecord' "$MAIN/java/ru/quantai/neskuchno/AppAudioRecorder.java"
+          ! grep -RIn --include='*.java' -E 'RecognizerIntent|SpeechRecognizer|ACTION_RECOGNIZE_SPEECH' "$MAIN"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK and Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 600 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "GRADLE_BIN=$RUNNER_TEMP/gradle-8.13/bin/gradle" >> "$GITHUB_ENV"
+
+      - name: Compile, unit test, lint and assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home"
+          "$GRADLE_BIN" -p "$PROJECT_ROOT" --no-daemon --console=plain clean testDebugUnitTest lintDebug assembleDebug --stacktrace | tee build.log
+          APK="$(find "$PROJECT_ROOT/app/build/outputs/apk/debug" -type f -name '*.apk' | head -n1)"
+          test -s "$APK"
+          cp "$APK" NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk
+          sha256sum NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > PLACEHOLDER_APK_SHA256.txt
+          tar -cJf NESKUCHNO_V15_ZEPHYR_SOURCE.tar.xz -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+
+      - name: Verify compiled APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/aapt" dump badging NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > badging.txt
+          "$BT/aapt" dump permissions NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > permissions.txt
+          "$BT/apksigner" verify --verbose --print-certs NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > signature.txt
+          unzip -t NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > zip-test.txt
+          grep -q "package: name='ru.quantai.neskuchno.debug'" badging.txt
+          grep -q 'android.permission.INTERNET' permissions.txt
+          grep -q 'android.permission.RECORD_AUDIO' permissions.txt
+          ! grep -q 'android.permission.CAMERA' permissions.txt
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk assets/config/routerai_key.txt > embedded-key-placeholder.txt
+          grep -q 'ROUTERAI_KEY_PLACEHOLDER' embedded-key-placeholder.txt
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings > dex-strings.txt
+          grep -q 'google/gemini-3.1-flash-tts-preview' dex-strings.txt
+          grep -q 'Zephyr' dex-strings.txt
+          grep -q 'qwen/qwen3.5-flash-02-23' dex-strings.txt
+
+      - name: Package signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p signing-tools/lib
+          cp "$BT/apksigner" "$BT/zipalign" signing-tools/
+          cp "$BT/lib/apksigner.jar" signing-tools/lib/
+          chmod +x signing-tools/apksigner signing-tools/zipalign
+          tar -czf ANDROID_SIGNING_TOOLS_35.tar.gz signing-tools
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NESKUCHNO_V15_ZEPHYR_FINAL_BUILD
+          path: |
+            NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk
+            NESKUCHNO_V15_ZEPHYR_SOURCE.tar.xz
+            PLACEHOLDER_APK_SHA256.txt
+            build.log
+            badging.txt
+            permissions.txt
+            signature.txt
+            zip-test.txt
+            dex-strings.txt
+            ANDROID_SIGNING_TOOLS_35.tar.gz
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
