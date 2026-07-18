@@ -141,23 +141,37 @@ jobs:
             "$GRADLE_BIN" -p "$PREFETCH_ROOT" --no-daemon --console=plain :app:dependencies --configuration "$cfg" --stacktrace | tee -a prefetch-build.log
           done
           du -sh "$GRADLE_USER_HOME" | tee cache-size.txt
-      - name: Package portable Gradle cache
+      - name: Package portable Gradle dependency cache in download-safe parts
         shell: bash
         run: |
           set -euo pipefail
           export GRADLE_USER_HOME="$RUNNER_TEMP/v16-gradle-home"
           find "$GRADLE_USER_HOME" -name '*.lock' -delete || true
           find "$GRADLE_USER_HOME" -type f -name 'gc.properties' -delete || true
-          GZIP=-1 tar -C "$RUNNER_TEMP" -czf V16_GRADLE_HOME_CACHE.tar.gz v16-gradle-home
-          sha256sum V16_GRADLE_HOME_CACHE.tar.gz > V16_GRADLE_HOME_CACHE.sha256
-          ls -lh V16_GRADLE_HOME_CACHE.tar.gz
+          cd "$RUNNER_TEMP"
+          GZIP=-1 tar -czf V16_GRADLE_MODULES_CACHE.tar.gz v16-gradle-home/caches/modules-2
+          AUX=()
+          for p in v16-gradle-home/caches/jars-* v16-gradle-home/caches/kotlin-dsl v16-gradle-home/caches/8.13; do
+            [ -e "$p" ] && AUX+=("$p")
+          done
+          GZIP=-1 tar -czf V16_GRADLE_AUX_CACHE.tar.gz "${AUX[@]}"
+          sha256sum V16_GRADLE_MODULES_CACHE.tar.gz V16_GRADLE_AUX_CACHE.tar.gz > V16_GRADLE_CACHE_SHA256.txt
+          ls -lh V16_GRADLE_MODULES_CACHE.tar.gz V16_GRADLE_AUX_CACHE.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: V16_GRADLE_HOME_CACHE
+          name: V16_GRADLE_MODULES_CACHE
           path: |
-            V16_GRADLE_HOME_CACHE.tar.gz
-            V16_GRADLE_HOME_CACHE.sha256
+            ${{ runner.temp }}/V16_GRADLE_MODULES_CACHE.tar.gz
+            ${{ runner.temp }}/V16_GRADLE_CACHE_SHA256.txt
             prefetch-build.log
             cache-size.txt
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V16_GRADLE_AUX_CACHE
+          path: |
+            ${{ runner.temp }}/V16_GRADLE_AUX_CACHE.tar.gz
+            ${{ runner.temp }}/V16_GRADLE_CACHE_SHA256.txt
           retention-days: 3
           compression-level: 0
