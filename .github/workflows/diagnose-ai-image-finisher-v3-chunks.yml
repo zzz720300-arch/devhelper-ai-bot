@@ -1,0 +1,44 @@
+name: Diagnose AI Image Finisher V3 Chunks
+
+on:
+  push:
+    branches: [ai-image-finisher-v3-functional]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record actual chunk hashes and reconstruction result
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== WC ==='
+            wc -c ai_image_finisher_v3/source.b64 ai_image_finisher_v3/source.0{1,2,3,4,5,6}
+            echo '=== SHA256 ==='
+            sha256sum ai_image_finisher_v3/source.b64 ai_image_finisher_v3/source.0{1,2,3,4,5,6}
+            echo '=== RECONSTRUCT ==='
+            cat ai_image_finisher_v3/source.b64 ai_image_finisher_v3/source.0{1,2,3,4,5,6} | tr -d '\r\n' | base64 -d > source.tar.gz
+            echo "base64_exit=$?"
+            ls -l source.tar.gz
+            sha256sum source.tar.gz
+            gzip -t source.tar.gz
+            echo "gzip_exit=$?"
+            tar -tzf source.tar.gz | head -20
+            echo "tar_exit=$?"
+          } > v3-chunk-diagnostic.txt 2>&1
+          cat v3-chunk-diagnostic.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V3_CHUNK_DIAGNOSTIC
+          path: v3-chunk-diagnostic.txt
+          if-no-files-found: error
+          retention-days: 7

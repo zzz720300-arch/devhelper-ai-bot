@@ -1,0 +1,198 @@
+name: Build AI Image Finisher V3 Final4 Functional
+
+on:
+  push:
+    branches: [ai-image-finisher-v3-functional]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore source and apply verified fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            ai_image_finisher_v3/source.00a ai_image_finisher_v3/source.00b \
+            ai_image_finisher_v3/source.00c ai_image_finisher_v3/source.00d \
+            ai_image_finisher_v3/source.01 ai_image_finisher_v3/source.02 \
+            ai_image_finisher_v3/source.03 ai_image_finisher_v3/source.04 \
+            ai_image_finisher_v3/source.05 ai_image_finisher_v3/source.06 \
+            | tr -d '\r\n' | base64 -d > source.tar.gz
+          echo '8599ad962ee053e344b14c924d4fb8f97f981e34aafea854ce9fde29571ab0d3  source.tar.gz' | sha256sum -c -
+          gzip -t source.tar.gz
+          mkdir project
+          tar -xzf source.tar.gz -C project
+          sed -i '/import androidx.compose.foundation.layout.weight/d' \
+            project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ImageFinisherApp.kt \
+            project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ResultScreen.kt
+          sed -i 's/(shaped \* 255f + 0.5f)\.roundToInt()/(shaped * 255f).roundToInt()/' \
+            project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/MaskPostProcessor.kt
+          ! grep -R -q 'import androidx.compose.foundation.layout.weight' project/imagefinisher-compose/src/main/java
+          ! grep -q '255f + 0.5f' project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/MaskPostProcessor.kt
+          grep -q '(shaped \* 255f).roundToInt()' project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/MaskPostProcessor.kt
+          grep -q 'BackgroundMaskMode.SOFT' project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/MaskPostProcessor.kt
+          grep -q 'Сохранить в устройство' project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ResultScreen.kt
+          grep -q 'Просмотреть результат' project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ImageFinisherApp.kt
+          ! grep -R -q 'Отправить результат' project/imagefinisher-compose/src/main/java
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install verified Gradle 8.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.13-bin.zip
+          echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  '"$RUNNER_TEMP"'/gradle.zip' | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'platform-tools'
+
+      - name: Embed verified local models
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=project/imagefinisher-sdk/src/main/assets/models
+          mkdir -p "$D"
+          curl -L --fail --retry 5 --retry-all-errors -o "$D/u2netp.onnx" 'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  project/imagefinisher-sdk/src/main/assets/models/u2netp.onnx' | sha256sum -c -
+          curl -L --fail --retry 5 --retry-all-errors -o "$D/real-esrgan-general-x4v3.onnx" 'https://huggingface.co/microsoft/dml-ai-hub-models/resolve/main/real_esrgan_general_x4v3/real_esrgan_general_x4v3.onnx?download=true'
+          echo 'a7af4e385afb59470d4f01e80d2cce33d899f1b205c1a96e4ce6e47eaa054781  project/imagefinisher-sdk/src/main/assets/models/real-esrgan-general-x4v3.onnx' | sha256sum -c -
+
+      - name: Execute real inference tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check onnxruntime==1.20.1 numpy==2.1.3 pillow==11.1.0 scikit-image==0.25.2
+          python3 - <<'PY'
+          import numpy as np
+          import onnxruntime as ort
+          from PIL import Image
+          from skimage import data
+          img=Image.fromarray(data.astronaut()).convert('RGB')
+          a=np.asarray(img.resize((320,320),Image.Resampling.LANCZOS)).astype(np.float32)
+          a/=max(float(a.max()),1e-6)
+          a=(a-np.array([.485,.456,.406],np.float32))/np.array([.229,.224,.225],np.float32)
+          a=np.transpose(a,(2,0,1))[None]
+          us=ort.InferenceSession('project/imagefinisher-sdk/src/main/assets/models/u2netp.onnx',providers=['CPUExecutionProvider'])
+          out=us.run(None,{us.get_inputs()[0].name:a})[0][0,0]
+          norm=(out-out.min())/max(float(out.max()-out.min()),1e-6)
+          assert float(np.quantile(norm,.10))<.25 and float(np.quantile(norm,.90))>.70
+          soft=np.where(norm<=.008,0,np.where(norm>=.992,1,norm))
+          Image.fromarray((soft*255).astype(np.uint8),'L').save('u2net-soft-mask.png')
+          x=np.asarray(img.resize((128,128),Image.Resampling.LANCZOS)).astype(np.float32)/255
+          x=np.transpose(x,(2,0,1))[None]
+          rs=ort.InferenceSession('project/imagefinisher-sdk/src/main/assets/models/real-esrgan-general-x4v3.onnx',providers=['CPUExecutionProvider'])
+          y=rs.run(None,{rs.get_inputs()[0].name:x})[0]
+          assert y.shape==(1,3,512,512) and float(np.std(y))>.05
+          Image.fromarray((np.clip(np.transpose(y[0],(1,2,0)),0,1)*255).astype(np.uint8)).save('realesrgan-smoke.png')
+          print('REAL_INFERENCE_PASS')
+          PY
+
+      - name: Create release signing key
+        shell: bash
+        run: |
+          keytool -genkeypair -v -keystore "$GITHUB_WORKSPACE/image-finisher-v3.jks" -storepass android -keypass android -alias imagefinisher -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=AI Image Finisher V3,O=NIKA UI Factory,C=EE'
+          cat > "$GITHUB_WORKSPACE/signing.properties" <<EOF
+          storeFile=$GITHUB_WORKSPACE/image-finisher-v3.jks
+          storePassword=android
+          keyAlias=imagefinisher
+          keyPassword=android
+          EOF
+
+      - name: Run unit tests lint APK AAB and AAR builds
+        shell: bash
+        env:
+          APP_SIGNING_PROPERTIES: ${{ github.workspace }}/signing.properties
+        run: |
+          set +e
+          cd project
+          gradle --no-daemon --stacktrace --console=plain \
+            :imagefinisher-sdk:testDebugUnitTest \
+            :sample-app:lintRelease \
+            :sample-app:assembleRelease \
+            :sample-app:bundleRelease \
+            :imagefinisher-sdk:assembleRelease \
+            :imagefinisher-compose:assembleRelease 2>&1 | tee "$GITHUB_WORKSPACE/gradle-v3-final4.log"
+          code=${PIPESTATUS[0]}
+          echo "$code" > "$GITHUB_WORKSPACE/gradle-v3-final4-exit.txt"
+          exit "$code"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V3_FINAL4_DIAGNOSTICS
+          path: |
+            gradle-v3-final4.log
+            gradle-v3-final4-exit.txt
+            u2net-soft-mask.png
+            realesrgan-smoke.png
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify signed package and internal workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir delivery
+          APK=$(find project/sample-app/build/outputs/apk/release -name '*.apk' -type f | head -1)
+          AAB=$(find project/sample-app/build/outputs/bundle/release -name '*.aab' -type f | head -1)
+          SDK=$(find project/imagefinisher-sdk/build/outputs/aar -name '*release*.aar' -type f | head -1)
+          UI=$(find project/imagefinisher-compose/build/outputs/aar -name '*release*.aar' -type f | head -1)
+          cp "$APK" delivery/AI-Image-Finisher-1.1.0-functional-release.apk
+          cp "$AAB" delivery/AI-Image-Finisher-1.1.0-functional-release.aab
+          cp "$SDK" delivery/imagefinisher-sdk-1.1.0-release.aar
+          cp "$UI" delivery/imagefinisher-compose-1.1.0-release.aar
+          cp image-finisher-v3.jks signing.properties delivery/
+          cp u2net-soft-mask.png realesrgan-smoke.png delivery/
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs delivery/AI-Image-Finisher-1.1.0-functional-release.apk > delivery/APK_SIGNATURE_REPORT.txt
+          unzip -t delivery/AI-Image-Finisher-1.1.0-functional-release.apk
+          unzip -l delivery/AI-Image-Finisher-1.1.0-functional-release.apk > delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/u2netp.onnx' delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/real-esrgan-general-x4v3.onnx' delivery/APK_CONTENTS.txt
+          test "$(stat -c%s delivery/AI-Image-Finisher-1.1.0-functional-release.apk)" -gt 18000000
+          grep -R -q 'ResultScreen' project/imagefinisher-compose/src/main/java
+          grep -R -q 'saveToPublicStorage' project/imagefinisher-compose/src/main/java
+          grep -R -q 'MediaStore' project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/ResultExporter.kt
+          cat > delivery/BUILD_REPORT.txt <<EOF
+          AI IMAGE FINISHER 1.1.0 FUNCTIONAL BUILD PASSED
+          U2NetP mask normalization, alpha shaping and zero-alpha rounding corrected
+          U2NetP and Real-ESRGAN real inference tests passed
+          Internal before/after preview and internal SVG viewer
+          Direct save through MediaStore; no primary external-app delegation
+          Unit tests, release lint, signed APK/AAB and reusable AAR modules passed
+          EOF
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_V3_FULL_SOURCE_WITH_MODELS.zip . -x '*/build/*' '.gradle/*')
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_V3_REUSABLE_MODULES_WITH_MODELS.zip imagefinisher-sdk imagefinisher-compose)
+          (cd delivery && sha256sum AI-* imagefinisher-*.aar image-finisher-v3.jks > SHA256SUMS.txt)
+          ls -lh delivery
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V3_FINAL4_FUNCTIONAL_DELIVERY
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 30
