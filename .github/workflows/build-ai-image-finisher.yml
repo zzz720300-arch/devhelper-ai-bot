@@ -39,6 +39,8 @@ jobs:
           gzip -t source.tar.gz
           tar -xzf source.tar.gz
           mv AI_IMAGE_FINISHER_CI_MIN project
+          sed -i 's/core = "1.19.0"/core = "1.17.0"/' project/gradle/libs.versions.toml
+          grep '^core = "1.17.0"' project/gradle/libs.versions.toml
           test -f project/gradlew
           test -f project/sample-app/src/main/AndroidManifest.xml
           test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/OnnxSuperResolutionEngine.kt
@@ -181,6 +183,7 @@ jobs:
           Gradle: 8.13 official distribution, SHA-256 verified
           Android compile/target SDK: 36
           Build Tools: 36.1.0
+          AndroidX Core: 1.17.0, compatible with SDK 36 and AGP 8.13.2
           Functions: resize, local ONNX AI upscale x2/x4, local ONNX background removal, editable SVG vectorization
           Background model: u2netp.onnx
           Upscale model: real-esrgan-general-x4v3.onnx
