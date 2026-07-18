@@ -1,0 +1,84 @@
+name: Diagnose AI Image Finisher Payload
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Produce payload diagnostic report
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== sizes ==='
+            wc -c \
+              ai_image_finisher_ci/source.00.txt \
+              ai_image_finisher_ci/source.01.txt \
+              ai_image_finisher_ci/source.02.txt \
+              ai_image_finisher_ci/source.03part0.txt \
+              ai_image_finisher_ci/source.03part1.txt \
+              ai_image_finisher_ci/source.04.txt
+            echo '=== hashes ==='
+            sha256sum \
+              ai_image_finisher_ci/source.00.txt \
+              ai_image_finisher_ci/source.01.txt \
+              ai_image_finisher_ci/source.02.txt \
+              ai_image_finisher_ci/source.03part0.txt \
+              ai_image_finisher_ci/source.03part1.txt \
+              ai_image_finisher_ci/source.04.txt
+            echo '=== python reconstruction ==='
+            python3 - <<'PY'
+          import base64, hashlib, pathlib, traceback
+          names = [
+              'source.00.txt', 'source.01.txt', 'source.02.txt',
+              'source.03part0.txt', 'source.03part1.txt', 'source.04.txt'
+          ]
+          root = pathlib.Path('ai_image_finisher_ci')
+          expected = {
+              'source.00.txt': '5d87634bf59d06486ed25de1ca395bd9f1292e7e90cd0f251c97aed67df9d2bd',
+              'source.01.txt': '413b02132c086917d98b9378b110464f1d50981072718759b97a8923872eaa64',
+              'source.02.txt': '2da589fbbd2e939001dd08a879f455ac8d6c0c34a6bd8a2eab3391c256545248',
+              'source.03part0.txt': 'df2b21d2e7dc40236eed9ce97d61b8997ccd3b7e14e7cff85e71ff758bc52870',
+              'source.03part1.txt': '84ad0320c17cceb8cb0ff9a1bc1ec1c7baa4926eb4b8b1662730f65e35f15e8a',
+              'source.04.txt': '8c8473b9eceeca46fd9f5e5122e0e5543ed41beb53f4b30fc5d75980f029bc03',
+          }
+          try:
+              pieces = []
+              for name in names:
+                  raw = (root / name).read_bytes()
+                  digest = hashlib.sha256(raw).hexdigest()
+                  print(name, len(raw), digest, 'expected', expected[name], 'MATCH', digest == expected[name])
+                  pieces.append(raw.replace(b'\r', b'').replace(b'\n', b''))
+              encoded = b''.join(pieces)
+              print('encoded bytes', len(encoded))
+              decoded = base64.b64decode(encoded, validate=True)
+              pathlib.Path('source.tar.gz').write_bytes(decoded)
+              print('archive bytes', len(decoded))
+              print('archive sha256', hashlib.sha256(decoded).hexdigest())
+          except Exception:
+              traceback.print_exc()
+          PY
+            echo '=== gzip ==='
+            gzip -t source.tar.gz
+            echo "gzip_exit=$?"
+            echo '=== tar ==='
+            tar -tzf source.tar.gz | head -30
+            echo "tar_exit=$?"
+          } > payload-diagnostic.txt 2>&1
+          cat payload-diagnostic.txt
+          exit 0
+      - name: Upload payload diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_PAYLOAD_DIAGNOSTIC
+          path: payload-diagnostic.txt
+          if-no-files-found: error
+          retention-days: 7
