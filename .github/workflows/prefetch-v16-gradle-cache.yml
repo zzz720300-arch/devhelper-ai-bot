@@ -15,7 +15,7 @@ concurrency:
 jobs:
   cache:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -110,22 +110,6 @@ jobs:
               debugImplementation("androidx.compose.ui:ui-tooling")
               debugImplementation("androidx.compose.ui:ui-test-manifest")
           }
-          val v16Configurations = listOf(
-              "debugCompileClasspath", "debugRuntimeClasspath",
-              "releaseCompileClasspath", "releaseRuntimeClasspath",
-              "kaptDebug", "kaptRelease",
-              "debugUnitTestCompileClasspath", "debugUnitTestRuntimeClasspath",
-              "debugAndroidTestCompileClasspath", "debugAndroidTestRuntimeClasspath"
-          )
-          tasks.register("resolveV16Artifacts") {
-              doLast {
-                  v16Configurations.forEach { name ->
-                      val cfg = configurations.getByName(name)
-                      println("=== resolving artifact files for $name ===")
-                      cfg.resolve().forEach { println(it.absolutePath) }
-                  }
-              }
-          }
           EOF
           cat > "$ROOT/app/src/main/AndroidManifest.xml" <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:theme="@style/AppTheme"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>
@@ -139,6 +123,12 @@ jobs:
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
           import androidx.compose.material3.Text
+          import androidx.room.Database
+          import androidx.room.Entity
+          import androidx.room.PrimaryKey
+          import androidx.room.RoomDatabase
+          @Entity data class Item(@PrimaryKey val id: Int)
+          @Database(entities=[Item::class], version=1) abstract class Db: RoomDatabase()
           class MainActivity: ComponentActivity() { override fun onCreate(state: Bundle?) { super.onCreate(state); setContent { Text("cache") } } }
           EOF
           cat > "$ROOT/app/src/test/java/cache/prefetch/CacheTest.kt" <<'EOF'
@@ -147,12 +137,12 @@ jobs:
           class CacheTest { @Test fun ok() = Unit }
           EOF
           echo "PREFETCH_ROOT=$ROOT" >> "$GITHUB_ENV"
-      - name: Download every required dependency artifact
+      - name: Compile all V16 dependency paths
         shell: bash
         run: |
           set -euo pipefail
           export GRADLE_USER_HOME="$RUNNER_TEMP/v16-gradle-home"
-          "$GRADLE_BIN" -p "$PREFETCH_ROOT" --no-daemon --console=plain :app:resolveV16Artifacts --stacktrace | tee prefetch-build.log
+          "$GRADLE_BIN" -p "$PREFETCH_ROOT" --no-daemon --console=plain clean testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease --stacktrace | tee prefetch-build.log
           du -sh "$GRADLE_USER_HOME" | tee cache-size.txt
       - name: Package portable Gradle dependency cache in download-safe parts
         shell: bash
