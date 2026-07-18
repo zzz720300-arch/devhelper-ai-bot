@@ -1,0 +1,175 @@
+name: Build AI Image Finisher Real Delivery
+
+on:
+  push:
+    branches:
+      - ai-image-finisher-real-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            ai_image_finisher_ci/source.00.txt \
+            ai_image_finisher_ci/source.01.txt \
+            ai_image_finisher_ci/source.02.txt \
+            ai_image_finisher_ci/source.03part0.txt \
+            ai_image_finisher_ci/source.03part1.txt \
+            ai_image_finisher_ci/source.04.txt \
+            | tr -d '\r\n' | base64 -d > source.tar.gz
+          gzip -t source.tar.gz
+          tar -xzf source.tar.gz
+          mv AI_IMAGE_FINISHER_CI_MIN project
+          test -f project/gradlew
+          test -f project/sample-app/src/main/AndroidManifest.xml
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/OnnxSuperResolutionEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/OnnxBackgroundRemovalEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/internal/KotlinVectorizationEngine.kt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'platform-tools'
+
+      - name: Download and verify real ONNX models
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL_DIR='project/imagefinisher-sdk/src/main/assets/models'
+          mkdir -p "$MODEL_DIR"
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$MODEL_DIR/u2netp.onnx" \
+            'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  project/imagefinisher-sdk/src/main/assets/models/u2netp.onnx' | sha256sum -c -
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$MODEL_DIR/real-esrgan-general-x4v3.onnx" \
+            'https://huggingface.co/microsoft/dml-ai-hub-models/resolve/main/real_esrgan_general_x4v3/real_esrgan_general_x4v3.onnx?download=true'
+          echo 'a7af4e385afb59470d4f01e80d2cce33d899f1b205c1a96e4ce6e47eaa054781  project/imagefinisher-sdk/src/main/assets/models/real-esrgan-general-x4v3.onnx' | sha256sum -c -
+
+          test "$(stat -c%s "$MODEL_DIR/u2netp.onnx")" -gt 4000000
+          test "$(stat -c%s "$MODEL_DIR/real-esrgan-general-x4v3.onnx")" -gt 4000000
+          ls -lh "$MODEL_DIR"
+
+      - name: Generate persistent closed-test signing package
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$GITHUB_WORKSPACE/image-finisher-test.jks" \
+            -storepass android \
+            -keypass android \
+            -alias imagefinisher \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname 'CN=AI Image Finisher Closed Test,O=NIKA UI Factory,C=EE'
+
+          cat > "$GITHUB_WORKSPACE/signing.properties" <<EOF
+          storeFile=$GITHUB_WORKSPACE/image-finisher-test.jks
+          storePassword=android
+          keyAlias=imagefinisher
+          keyPassword=android
+          EOF
+
+      - name: Run tests, lint and build APK AAB AAR
+        shell: bash
+        env:
+          APP_SIGNING_PROPERTIES: ${{ github.workspace }}/signing.properties
+        run: |
+          set -euo pipefail
+          cd project
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --console=plain \
+            :imagefinisher-sdk:testDebugUnitTest \
+            :sample-app:lintRelease \
+            :sample-app:assembleRelease \
+            :sample-app:bundleRelease \
+            :imagefinisher-sdk:assembleRelease \
+            :imagefinisher-compose:assembleRelease
+
+      - name: Verify and package real delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery
+
+          APK="$(find project/sample-app/build/outputs/apk/release -name '*.apk' -type f | head -1)"
+          AAB="$(find project/sample-app/build/outputs/bundle/release -name '*.aab' -type f | head -1)"
+          SDK_AAR="$(find project/imagefinisher-sdk/build/outputs/aar -name '*release*.aar' -type f | head -1)"
+          UI_AAR="$(find project/imagefinisher-compose/build/outputs/aar -name '*release*.aar' -type f | head -1)"
+
+          test -s "$APK"
+          test -s "$AAB"
+          test -s "$SDK_AAR"
+          test -s "$UI_AAR"
+
+          cp "$APK" delivery/AI-Image-Finisher-1.0.0-release.apk
+          cp "$AAB" delivery/AI-Image-Finisher-1.0.0-release.aab
+          cp "$SDK_AAR" delivery/imagefinisher-sdk-release.aar
+          cp "$UI_AAR" delivery/imagefinisher-compose-release.aar
+          cp image-finisher-test.jks signing.properties delivery/
+
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs delivery/AI-Image-Finisher-1.0.0-release.apk | tee delivery/APK_SIGNATURE_REPORT.txt
+          unzip -t delivery/AI-Image-Finisher-1.0.0-release.apk
+          unzip -l delivery/AI-Image-Finisher-1.0.0-release.apk | tee delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/u2netp.onnx' delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/real-esrgan-general-x4v3.onnx' delivery/APK_CONTENTS.txt
+          test "$(stat -c%s delivery/AI-Image-Finisher-1.0.0-release.apk)" -gt 18000000
+
+          cat > delivery/BUILD_REPORT.txt <<EOF
+          AI IMAGE FINISHER 1.0.0 REAL DELIVERY
+          ====================================
+          JDK: 17
+          Android compile/target SDK: 36
+          Build Tools: 36.1.0
+          Functions: resize, local ONNX AI upscale x2/x4, local ONNX background removal, editable SVG vectorization
+          Background model: u2netp.onnx
+          Upscale model: real-esrgan-general-x4v3.onnx
+          Models embedded in APK: VERIFIED
+          APK signature: VERIFIED
+          Unit tests: PASSED
+          Android lint release: PASSED
+          APK/AAB/AAR assembly: PASSED
+          EOF
+
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_FULL_SOURCE_WITH_MODELS.zip . -x '*/build/*' '.gradle/*')
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_REUSABLE_MODULES_WITH_MODELS.zip imagefinisher-sdk imagefinisher-compose)
+          (cd delivery && sha256sum AI-* imagefinisher-*.aar image-finisher-test.jks > SHA256SUMS.txt)
+          ls -lh delivery
+
+      - name: Upload complete real delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_REAL_DELIVERY
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 30
