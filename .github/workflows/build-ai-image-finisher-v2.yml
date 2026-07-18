@@ -1,0 +1,175 @@
+name: Build AI Image Finisher V2
+
+on:
+  push:
+    branches: [ai-image-finisher-real-build]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore and patch Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat ai_image_finisher_ci/source.00.txt \
+              ai_image_finisher_ci/source.01.txt \
+              ai_image_finisher_ci/source.02.txt \
+              ai_image_finisher_ci/source.03part0.txt \
+              ai_image_finisher_ci/source.03part1.txt \
+              ai_image_finisher_ci/source.04.txt \
+              | tr -d '\r\n' | base64 -d > source.tar.gz
+          gzip -t source.tar.gz
+          tar -xzf source.tar.gz
+          mv AI_IMAGE_FINISHER_CI_MIN project
+          python3 - <<'PY'
+          from pathlib import Path
+          versions = Path('project/gradle/libs.versions.toml')
+          text = versions.read_text()
+          text = text.replace('core = "1.19.0"', 'core = "1.17.0"')
+          versions.write_text(text)
+
+          app = Path('project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ImageFinisherApp.kt')
+          text = app.read_text()
+          text = text.replace('import androidx.compose.foundation.layout.weight\n', '')
+          app.write_text(text)
+
+          components = Path('project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/NeonComponents.kt')
+          text = components.read_text()
+          old = '    accent: Color,\n    onClick: () -> Unit,\n    modifier: Modifier = Modifier\n'
+          new = '    accent: Color,\n    modifier: Modifier = Modifier,\n    onClick: () -> Unit\n'
+          if old not in text:
+              raise SystemExit('FeatureCard signature not found')
+          components.write_text(text.replace(old, new))
+          PY
+          grep '^core = "1.17.0"' project/gradle/libs.versions.toml
+          ! grep -q 'layout.weight' project/imagefinisher-compose/src/main/java/ru/quantai/imagefinisher/compose/ImageFinisherApp.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/OnnxSuperResolutionEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/OnnxBackgroundRemovalEngine.kt
+          test -f project/imagefinisher-sdk/src/main/java/ru/quantai/imagefinisher/sdk/KotlinVectorizationEngine.kt
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install verified Gradle 8.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.13-bin.zip
+          echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  '"$RUNNER_TEMP"'/gradle.zip' | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'platform-tools'
+
+      - name: Download and verify embedded ONNX models
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=project/imagefinisher-sdk/src/main/assets/models
+          mkdir -p "$D"
+          curl -L --fail --retry 5 --retry-all-errors -o "$D/u2netp.onnx" 'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  project/imagefinisher-sdk/src/main/assets/models/u2netp.onnx' | sha256sum -c -
+          curl -L --fail --retry 5 --retry-all-errors -o "$D/real-esrgan-general-x4v3.onnx" 'https://huggingface.co/microsoft/dml-ai-hub-models/resolve/main/real_esrgan_general_x4v3/real_esrgan_general_x4v3.onnx?download=true'
+          echo 'a7af4e385afb59470d4f01e80d2cce33d899f1b205c1a96e4ce6e47eaa054781  project/imagefinisher-sdk/src/main/assets/models/real-esrgan-general-x4v3.onnx' | sha256sum -c -
+          test "$(stat -c%s "$D/u2netp.onnx")" -gt 4000000
+          test "$(stat -c%s "$D/real-esrgan-general-x4v3.onnx")" -gt 4000000
+
+      - name: Create closed-test signing key
+        shell: bash
+        run: |
+          keytool -genkeypair -v -keystore "$GITHUB_WORKSPACE/image-finisher-test.jks" -storepass android -keypass android -alias imagefinisher -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=AI Image Finisher Closed Test,O=NIKA UI Factory,C=EE'
+          cat > "$GITHUB_WORKSPACE/signing.properties" <<EOF
+          storeFile=$GITHUB_WORKSPACE/image-finisher-test.jks
+          storePassword=android
+          keyAlias=imagefinisher
+          keyPassword=android
+          EOF
+
+      - name: Test lint and assemble
+        shell: bash
+        env:
+          APP_SIGNING_PROPERTIES: ${{ github.workspace }}/signing.properties
+        run: |
+          set +e
+          cd project
+          gradle --no-daemon --stacktrace --console=plain \
+            :imagefinisher-sdk:testDebugUnitTest \
+            :sample-app:lintRelease \
+            :sample-app:assembleRelease \
+            :sample-app:bundleRelease \
+            :imagefinisher-sdk:assembleRelease \
+            :imagefinisher-compose:assembleRelease 2>&1 | tee "$GITHUB_WORKSPACE/gradle-v2.log"
+          code=${PIPESTATUS[0]}
+          echo "$code" > "$GITHUB_WORKSPACE/gradle-v2-exit.txt"
+          exit "$code"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V2_DIAGNOSTICS
+          path: |
+            gradle-v2.log
+            gradle-v2-exit.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify and package delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir delivery
+          APK=$(find project/sample-app/build/outputs/apk/release -name '*.apk' -type f | head -1)
+          AAB=$(find project/sample-app/build/outputs/bundle/release -name '*.aab' -type f | head -1)
+          SDK=$(find project/imagefinisher-sdk/build/outputs/aar -name '*release*.aar' -type f | head -1)
+          UI=$(find project/imagefinisher-compose/build/outputs/aar -name '*release*.aar' -type f | head -1)
+          cp "$APK" delivery/AI-Image-Finisher-1.0.0-release.apk
+          cp "$AAB" delivery/AI-Image-Finisher-1.0.0-release.aab
+          cp "$SDK" delivery/imagefinisher-sdk-release.aar
+          cp "$UI" delivery/imagefinisher-compose-release.aar
+          cp image-finisher-test.jks signing.properties delivery/
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs delivery/AI-Image-Finisher-1.0.0-release.apk > delivery/APK_SIGNATURE_REPORT.txt
+          unzip -l delivery/AI-Image-Finisher-1.0.0-release.apk > delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/u2netp.onnx' delivery/APK_CONTENTS.txt
+          grep -q 'assets/models/real-esrgan-general-x4v3.onnx' delivery/APK_CONTENTS.txt
+          test "$(stat -c%s delivery/AI-Image-Finisher-1.0.0-release.apk)" -gt 18000000
+          cat > delivery/BUILD_REPORT.txt <<EOF
+          REAL BUILD PASSED
+          JDK 17; Gradle 8.13; Android SDK 36; Build Tools 36.1.0
+          AndroidX Core 1.17.0
+          U2NetP and Real-ESRGAN models embedded and SHA-256 verified
+          Resize, AI upscale x2/x4, background removal, editable SVG vectorization
+          Unit tests, release lint, signed APK/AAB and reusable AAR modules passed
+          EOF
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_FULL_SOURCE_WITH_MODELS.zip . -x '*/build/*' '.gradle/*')
+          (cd project && zip -qr ../delivery/AI_IMAGE_FINISHER_REUSABLE_MODULES_WITH_MODELS.zip imagefinisher-sdk imagefinisher-compose)
+          (cd delivery && sha256sum AI-* imagefinisher-*.aar image-finisher-test.jks > SHA256SUMS.txt)
+          ls -lh delivery
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V2_REAL_DELIVERY
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 30
