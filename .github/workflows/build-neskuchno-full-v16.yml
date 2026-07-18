@@ -1,0 +1,141 @@
+name: Build full Neskuchno Compose V16
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neskuchno-full-compose-v16-final
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore complete prepared V16 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/neskuchno-v16-full/source.part*.b64 | tr -d '\r\n ' | base64 -d > source-v16.tar.xz
+          sha256sum source-v16.tar.xz | tee source-v16-sha256.txt
+          xz -t source-v16.tar.xz
+          mkdir restored
+          tar -xJf source-v16.tar.xz -C restored
+          ROOT="$(find restored -name settings.gradle.kts -printf '%h\n' | head -n1)"
+          test -n "$ROOT"
+          python3 "$ROOT/scripts/VERIFY_STATIC.py" | tee static-verification.txt
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Audit exact requested integrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN="$PROJECT_ROOT/app/src/main"
+          grep -Rqs 'qwen/qwen3.5-flash-02-23' "$PROJECT_ROOT/app"
+          grep -Rqs 'google/gemini-3.1-flash-tts-preview' "$PROJECT_ROOT/app"
+          grep -Rqs 'Zephyr' "$PROJECT_ROOT/app"
+          grep -Rqs 'openai/whisper-large-v3-turbo' "$PROJECT_ROOT/app"
+          grep -Rqs 'AudioRecord' "$MAIN/java"
+          grep -Rqs 'локальные заготовки запрещены' "$MAIN/assets/prompts/absurd_news_system.txt"
+          ! grep -RIns --include='*.kt' -E 'RecognizerIntent|SpeechRecognizer|ACTION_RECOGNIZE_SPEECH|android\.speech' "$MAIN/java"
+          ! grep -RIns -E 'offline_absurd_news|LocalFunRepository|randomAbsurdNews' "$MAIN"
+          test "$(cat "$MAIN/assets/config/routerai_key.txt")" = 'ROUTERAI_KEY_PLACEHOLDER'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 600 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "GRADLE_BIN=$RUNNER_TEMP/gradle-8.13/bin/gradle" >> "$GITHUB_ENV"
+
+      - name: Compile, unit test, lint and assemble release
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home"
+          "$GRADLE_BIN" -p "$PROJECT_ROOT" --no-daemon --console=plain clean testDebugUnitTest lintDebug lintRelease assembleRelease --stacktrace | tee gradle-build.log
+          APK="$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -type f -name '*.apk' | head -n1)"
+          test -s "$APK"
+          cp "$APK" NESKUCHNO_FULL_COMPOSE_V16_RELEASE_UNSIGNED_PLACEHOLDER.apk
+          tar -cJf NESKUCHNO_FULL_COMPOSE_V16_SOURCE_PLACEHOLDER.tar.xz -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+          sha256sum NESKUCHNO_FULL_COMPOSE_V16_RELEASE_UNSIGNED_PLACEHOLDER.apk NESKUCHNO_FULL_COMPOSE_V16_SOURCE_PLACEHOLDER.tar.xz > CI_SHA256SUMS.txt
+
+      - name: Verify APK structure and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=NESKUCHNO_FULL_COMPOSE_V16_RELEASE_UNSIGNED_PLACEHOLDER.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/aapt" dump badging "$APK" > apk-badging.txt
+          "$BT/aapt" dump permissions "$APK" > apk-permissions.txt
+          unzip -t "$APK" > apk-zip-test.txt
+          grep -q "package: name='ru.quantai.neskuchno'" apk-badging.txt
+          grep -q 'android.permission.INTERNET' apk-permissions.txt
+          grep -q 'android.permission.RECORD_AUDIO' apk-permissions.txt
+          ! grep -q 'android.permission.CAMERA' apk-permissions.txt
+          unzip -p "$APK" assets/config/routerai_key.txt > embedded-key.txt
+          test "$(cat embedded-key.txt)" = 'ROUTERAI_KEY_PLACEHOLDER'
+          rm -rf dex-check && mkdir dex-check
+          unzip -q "$APK" 'classes*.dex' -d dex-check
+          find dex-check -name 'classes*.dex' -print0 | xargs -0 strings > dex-strings.txt
+          grep -q 'qwen/qwen3.5-flash-02-23' dex-strings.txt
+          grep -q 'google/gemini-3.1-flash-tts-preview' dex-strings.txt
+          grep -q 'openai/whisper-large-v3-turbo' dex-strings.txt
+          grep -q 'Zephyr' dex-strings.txt
+          ! grep -Eqi 'RecognizerIntent|SpeechRecognizer|ACTION_RECOGNIZE_SPEECH|android\.speech' dex-strings.txt
+          SIZE="$(stat -c%s "$APK")"
+          test "$SIZE" -gt 1000000
+          echo "APK_BYTES=$SIZE" | tee apk-size.txt
+
+      - name: Package Android signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p signing-tools/lib
+          cp "$BT/apksigner" "$BT/zipalign" signing-tools/
+          cp "$BT/lib/apksigner.jar" signing-tools/lib/
+          chmod +x signing-tools/apksigner signing-tools/zipalign
+          tar -czf ANDROID_SIGNING_TOOLS_35.tar.gz signing-tools
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NESKUCHNO_FULL_COMPOSE_V16_CI
+          path: |
+            source-v16-sha256.txt
+            source-v16.tar.xz
+            NESKUCHNO_FULL_COMPOSE_V16_RELEASE_UNSIGNED_PLACEHOLDER.apk
+            NESKUCHNO_FULL_COMPOSE_V16_SOURCE_PLACEHOLDER.tar.xz
+            CI_SHA256SUMS.txt
+            static-verification.txt
+            gradle-build.log
+            apk-badging.txt
+            apk-permissions.txt
+            apk-zip-test.txt
+            apk-size.txt
+            dex-strings.txt
+            ANDROID_SIGNING_TOOLS_35.tar.gz
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
