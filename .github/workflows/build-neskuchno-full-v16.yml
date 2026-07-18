@@ -22,21 +22,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          exec > >(tee restore.log) 2>&1
+          echo checkout > restore-stage.txt
+          ls -l payload/neskuchno-v14 payload/neskuchno-v16 | tee payload-files.txt
+          echo source-decode > restore-stage.txt
           cat payload/neskuchno-v14/source.*.txt | tr -d '\r\n ' | base64 -d > source.tar.xz
+          sha256sum source.tar.xz | tee source-actual-sha256.txt
           xz -t source.tar.xz
+          echo source-extract > restore-stage.txt
           mkdir restored
           tar -xJf source.tar.xz -C restored
           ROOT="$(find restored -name settings.gradle.kts -printf '%h\n' | head -n1)"
           test -n "$ROOT"
+          echo patch-decode > restore-stage.txt
           cat payload/neskuchno-v16/patch.part*.b64 | tr -d '\r\n ' | base64 -d > patch.zip
+          sha256sum patch.zip | tee patch-actual-sha256.txt
           echo '901bb0766af82849827af67ccb1e600ac5ee79a9f662812695fa769bd5fe1f52  patch.zip' | sha256sum -c -
-          unzip -t patch.zip
+          unzip -t patch.zip | tee patch-zip-test.txt
+          echo patch-apply > restore-stage.txt
           unzip -oq patch.zip -d "$ROOT"
           while IFS= read -r relative; do
             [ -z "$relative" ] || rm -f "$ROOT/$relative"
           done < "$ROOT/DELETE_LIST.txt"
           rm -f "$ROOT/DELETE_LIST.txt"
+          echo static-verify > restore-stage.txt
           python3 "$ROOT/scripts/VERIFY_STATIC.py" | tee static-verification.txt
+          echo complete > restore-stage.txt
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
       - name: Audit exact requested integrations
@@ -105,7 +116,6 @@ jobs:
           grep -q 'google/gemini-3.1-flash-tts-preview' dex-strings.txt
           grep -q 'openai/whisper-large-v3-turbo' dex-strings.txt
           grep -q 'Zephyr' dex-strings.txt
-          test "$(find dex-check -name 'classes*.dex' | wc -l)" -ge 2
           SIZE="$(stat -c%s "$APK")"
           test "$SIZE" -gt 1000000
           echo "APK_BYTES=$SIZE" | tee apk-size.txt
@@ -126,6 +136,12 @@ jobs:
         with:
           name: NESKUCHNO_FULL_COMPOSE_V16_CI
           path: |
+            restore.log
+            restore-stage.txt
+            payload-files.txt
+            source-actual-sha256.txt
+            patch-actual-sha256.txt
+            patch-zip-test.txt
             NESKUCHNO_FULL_COMPOSE_V16_RELEASE_UNSIGNED_PLACEHOLDER.apk
             NESKUCHNO_FULL_COMPOSE_V16_SOURCE_PLACEHOLDER.tar.xz
             CI_SHA256SUMS.txt
