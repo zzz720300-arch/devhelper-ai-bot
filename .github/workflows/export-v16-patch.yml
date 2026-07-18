@@ -1,0 +1,29 @@
+name: Export V16 patch
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/neskuchno-v16/patch.part*.b64 | tr -d '\r\n ' | base64 -d > NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+          echo '901bb0766af82849827af67ccb1e600ac5ee79a9f662812695fa769bd5fe1f52  NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip' | sha256sum -c -
+          unzip -t NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NESKUCHNO_FULL_COMPOSE_V16_PATCH
+          path: NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+          retention-days: 3
+          compression-level: 0
