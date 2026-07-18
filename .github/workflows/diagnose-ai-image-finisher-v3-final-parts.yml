@@ -1,0 +1,44 @@
+name: Diagnose AI Image Finisher V3 Final Parts
+
+on:
+  push:
+    branches: [ai-image-finisher-v3-functional]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record all final source parts
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== WC ==='
+            wc -c ai_image_finisher_v3/source.00{a,b,c,d} ai_image_finisher_v3/source.0{1,2,3,4,5,6}
+            echo '=== SHA256 ==='
+            sha256sum ai_image_finisher_v3/source.00{a,b,c,d} ai_image_finisher_v3/source.0{1,2,3,4,5,6}
+            echo '=== RECONSTRUCT ==='
+            cat ai_image_finisher_v3/source.00{a,b,c,d} ai_image_finisher_v3/source.0{1,2,3,4,5,6} | tr -d '\r\n' | base64 -d > source.tar.gz
+            echo "base64_exit=$?"
+            wc -c source.tar.gz
+            sha256sum source.tar.gz
+            gzip -t source.tar.gz
+            echo "gzip_exit=$?"
+            tar -tzf source.tar.gz | head -20
+            echo "tar_exit=$?"
+          } > v3-final-parts.txt 2>&1
+          cat v3-final-parts.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V3_FINAL_PARTS_DIAGNOSTIC
+          path: v3-final-parts.txt
+          if-no-files-found: error
+          retention-days: 7
