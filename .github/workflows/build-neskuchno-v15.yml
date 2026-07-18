@@ -23,7 +23,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat ci_payload/neskuchno-v15/source.part* | tr -d '\r\n ' | base64 -d > source.tar.xz
+          cat \
+            ci_payload/neskuchno-v15/source.part00 \
+            ci_payload/neskuchno-v15/source.part01 \
+            ci_payload/neskuchno-v15/source.part02 \
+            ci_payload/neskuchno-v15/source.part03 \
+            ci_payload/neskuchno-v15/source.part04a \
+            ci_payload/neskuchno-v15/source.part04b \
+            ci_payload/neskuchno-v15/source.part05 \
+            ci_payload/neskuchno-v15/source.part06 \
+            ci_payload/neskuchno-v15/source.part07 \
+            | tr -d '\r\n ' | base64 -d > source.tar.xz
           echo 'fbb97de69873202d21ac16955d0babde808302bb39eb304cda3032ea22733080  source.tar.xz' | sha256sum -c -
           xz -t source.tar.xz
           mkdir -p restored
