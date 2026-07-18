@@ -108,7 +108,7 @@ jobs:
         env:
           APP_SIGNING_PROPERTIES: ${{ github.workspace }}/signing.properties
         run: |
-          set -euo pipefail
+          set +e
           cd project
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace --console=plain \
@@ -117,7 +117,22 @@ jobs:
             :sample-app:assembleRelease \
             :sample-app:bundleRelease \
             :imagefinisher-sdk:assembleRelease \
-            :imagefinisher-compose:assembleRelease
+            :imagefinisher-compose:assembleRelease \
+            2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
+          STATUS=${PIPESTATUS[0]}
+          echo "$STATUS" > "$GITHUB_WORKSPACE/gradle-build-exit-code.txt"
+          exit "$STATUS"
+
+      - name: Upload Gradle build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_GRADLE_DIAGNOSTICS
+          path: |
+            gradle-build.log
+            gradle-build-exit-code.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify and package real delivery
         shell: bash
