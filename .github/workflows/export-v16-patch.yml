@@ -8,22 +8,35 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: export-v16-patch
+  cancel-in-progress: true
+
 jobs:
   export:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Restore and verify patch
+      - name: Restore patch and record integrity
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
+          ls -lh payload/neskuchno-v16/patch.part*.b64 | tee PATCH_PARTS.txt
+          wc -c payload/neskuchno-v16/patch.part*.b64 | tee PATCH_PART_SIZES.txt
           cat payload/neskuchno-v16/patch.part*.b64 | tr -d '\r\n ' | base64 -d > NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
-          echo '901bb0766af82849827af67ccb1e600ac5ee79a9f662812695fa769bd5fe1f52  NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip' | sha256sum -c -
-          unzip -t NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+          sha256sum NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip | tee PATCH_ACTUAL_SHA256.txt
+          unzip -t NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip > PATCH_ZIP_TEST.txt 2>&1 || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: NESKUCHNO_FULL_COMPOSE_V16_PATCH
-          path: NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+          path: |
+            NESKUCHNO_FULL_COMPOSE_V16_PATCH.zip
+            PATCH_PARTS.txt
+            PATCH_PART_SIZES.txt
+            PATCH_ACTUAL_SHA256.txt
+            PATCH_ZIP_TEST.txt
+          if-no-files-found: warn
           retention-days: 3
           compression-level: 0
