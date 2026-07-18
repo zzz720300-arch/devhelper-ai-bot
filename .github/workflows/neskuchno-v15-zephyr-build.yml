@@ -1,0 +1,210 @@
+name: Build Neskuchno V15 Zephyr APK
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat ci_payload/neskuchno-v15/source.part00 ci_payload/neskuchno-v15/source.part01 ci_payload/neskuchno-v15/source.part02 ci_payload/neskuchno-v15/source.part03 ci_payload/neskuchno-v15/source.part04a ci_payload/neskuchno-v15/source.part04b ci_payload/neskuchno-v15/source.part05 ci_payload/neskuchno-v15/source.part06 ci_payload/neskuchno-v15/source.part07 | tr -d '\r\n ' | base64 -d > source.tar.xz
+          echo 'fbb97de69873202d21ac16955d0babde808302bb39eb304cda3032ea22733080  source.tar.xz' | sha256sum -c -
+          mkdir restored
+          tar -xJf source.tar.xz -C restored
+          ROOT="$(find restored -name settings.gradle.kts -printf '%h\n' | head -n1)"
+          test -n "$ROOT"
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Apply Zephyr PCM and compile fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+
+          root = Path(os.environ['PROJECT_ROOT'])
+          client = root / 'app/src/main/java/ru/quantai/neskuchno/RouterAiClient.java'
+          ui = root / 'app/src/main/java/ru/quantai/neskuchno/UiFactory.java'
+          s = client.read_text(encoding='utf-8')
+          s = s.replace('public static final String TTS_MODEL = "x-ai/grok-voice-tts-1.0";',
+                        'public static final String TTS_MODEL = "google/gemini-3.1-flash-tts-preview";')
+          s = s.replace('public static final String TTS_VOICE = "eve";',
+                        'public static final String TTS_VOICE = "Zephyr";')
+          s = s.replace('import java.nio.charset.StandardCharsets;',
+                        'import java.nio.ByteBuffer;\nimport java.nio.ByteOrder;\nimport java.nio.charset.StandardCharsets;')
+
+          start = s.index('    public File synthesize(String text) throws IOException, JSONException {')
+          end = s.index('    public String transcribe(File wav)', start)
+          new_method = '''    public File synthesize(String text) throws IOException, JSONException {
+              ensureKey();
+              String clean = text == null ? "" : text.replaceAll("https?://\\\\S+", "").trim();
+              if (clean.isEmpty()) throw new IOException("Нет текста для озвучивания");
+              if (clean.length() > 3500) clean = clean.substring(0, 3500);
+              JSONObject request = new JSONObject();
+              request.put("model", TTS_MODEL);
+              request.put("input", clean);
+              request.put("voice", TTS_VOICE);
+              request.put("response_format", "pcm");
+
+              HttpURLConnection connection = open("audio/speech", "application/json", "audio/pcm");
+              activeConnection.set(connection);
+              try {
+                  write(connection, request.toString().getBytes(StandardCharsets.UTF_8));
+                  int code = connection.getResponseCode();
+                  if (code < 200 || code >= 300) throw apiError(connection, code);
+                  byte[] pcm = readAll(new BufferedInputStream(connection.getInputStream()));
+                  if (pcm.length < 960) throw new IOException("RouterAI TTS вернул слишком короткое PCM-аудио");
+                  File output = new File(context.getCacheDir(), "tts_" + System.currentTimeMillis() + ".wav");
+                  writePcm16MonoWav(output, pcm, 24000);
+                  return output;
+              } finally {
+                  activeConnection.compareAndSet(connection, null);
+                  connection.disconnect();
+              }
+          }
+
+          private static void writePcm16MonoWav(File file, byte[] pcm, int sampleRate) throws IOException {
+              int channels = 1;
+              int bitsPerSample = 16;
+              int byteRate = sampleRate * channels * bitsPerSample / 8;
+              int blockAlign = channels * bitsPerSample / 8;
+              ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+              header.put("RIFF".getBytes(StandardCharsets.US_ASCII));
+              header.putInt(36 + pcm.length);
+              header.put("WAVE".getBytes(StandardCharsets.US_ASCII));
+              header.put("fmt ".getBytes(StandardCharsets.US_ASCII));
+              header.putInt(16);
+              header.putShort((short) 1);
+              header.putShort((short) channels);
+              header.putInt(sampleRate);
+              header.putInt(byteRate);
+              header.putShort((short) blockAlign);
+              header.putShort((short) bitsPerSample);
+              header.put("data".getBytes(StandardCharsets.US_ASCII));
+              header.putInt(pcm.length);
+              try (FileOutputStream out = new FileOutputStream(file)) {
+                  out.write(header.array());
+                  out.write(pcm);
+                  out.flush();
+              }
+          }
+
+'''
+          s = s[:start] + new_method + s[end:]
+          client.write_text(s, encoding='utf-8')
+
+          u = ui.read_text(encoding='utf-8').replace('button.setTextAllCaps(false);', 'button.setAllCaps(false);')
+          ui.write_text(u, encoding='utf-8')
+
+          assert 'google/gemini-3.1-flash-tts-preview' in s
+          assert 'TTS_VOICE = "Zephyr"' in s
+          assert 'response.put("response_format", "pcm")' not in s
+          assert 'request.put("response_format", "pcm")' in s
+          assert 'writePcm16MonoWav' in s
+          assert 'локальные заготовки запрещены' in s
+          PY
+
+      - name: Audit dynamic humor and private integrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN="$PROJECT_ROOT/app/src/main"
+          CLIENT="$MAIN/java/ru/quantai/neskuchno/RouterAiClient.java"
+          grep -q 'generateAbsurdNews' "$CLIENT"
+          grep -q 'chat/completions' "$CLIENT"
+          grep -q 'локальные заготовки запрещены' "$CLIENT"
+          grep -q 'google/gemini-3.1-flash-tts-preview' "$CLIENT"
+          grep -q 'TTS_VOICE = "Zephyr"' "$CLIENT"
+          grep -q 'response_format", "pcm"' "$CLIENT"
+          grep -q 'writePcm16MonoWav' "$CLIENT"
+          grep -q 'AudioRecord' "$MAIN/java/ru/quantai/neskuchno/AppAudioRecorder.java"
+          ! grep -RIn --include='*.java' -E 'RecognizerIntent|SpeechRecognizer|ACTION_RECOGNIZE_SPEECH' "$MAIN"
+          python3 - <<'PY'
+          import json, os
+          root=os.environ['PROJECT_ROOT']
+          stories=json.load(open(root+'/app/src/main/assets/stories/stories.json',encoding='utf-8'))
+          assert len(stories)>=12
+          print('local_reading_stories=',len(stories))
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK and Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 600 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "GRADLE_BIN=$RUNNER_TEMP/gradle-8.13/bin/gradle" >> "$GITHUB_ENV"
+
+      - name: Build, test and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home"
+          "$GRADLE_BIN" -p "$PROJECT_ROOT" --no-daemon --console=plain clean testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease --stacktrace | tee build.log
+          DEBUG_APK="$(find "$PROJECT_ROOT/app/build/outputs/apk/debug" -type f -name '*.apk' | head -n1)"
+          RELEASE_APK="$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -type f -name '*.apk' | head -n1)"
+          test -s "$DEBUG_APK"
+          test -s "$RELEASE_APK"
+          cp "$DEBUG_APK" NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk
+          cp "$RELEASE_APK" NESKUCHNO_V15_ZEPHYR_RELEASE_UNSIGNED_PLACEHOLDER.apk
+          sha256sum NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk NESKUCHNO_V15_ZEPHYR_RELEASE_UNSIGNED_PLACEHOLDER.apk > SHA256SUMS.txt
+          tar -cJf NESKUCHNO_V15_ZEPHYR_SOURCE.tar.xz -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/aapt" dump badging NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > badging.txt
+          "$BT/aapt" dump permissions NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > permissions.txt
+          "$BT/apksigner" verify --verbose --print-certs NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > signature.txt
+          unzip -t NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk > zip-test.txt
+          grep -q "package: name='ru.quantai.neskuchno.debug'" badging.txt
+          grep -q 'android.permission.INTERNET' permissions.txt
+          grep -q 'android.permission.RECORD_AUDIO' permissions.txt
+          ! grep -q 'android.permission.CAMERA' permissions.txt
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk assets/config/routerai_key.txt | grep -q 'ROUTERAI_KEY_PLACEHOLDER'
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'google/gemini-3.1-flash-tts-preview'
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'Zephyr'
+          unzip -p NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk classes.dex | strings | grep -q 'qwen/qwen3.5-flash-02-23'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NESKUCHNO_V15_ZEPHYR_BUILD
+          path: |
+            NESKUCHNO_V15_ZEPHYR_DEBUG_PLACEHOLDER.apk
+            NESKUCHNO_V15_ZEPHYR_RELEASE_UNSIGNED_PLACEHOLDER.apk
+            NESKUCHNO_V15_ZEPHYR_SOURCE.tar.xz
+            SHA256SUMS.txt
+            build.log
+            badging.txt
+            permissions.txt
+            signature.txt
+            zip-test.txt
+          retention-days: 14
+          compression-level: 0
