@@ -13,26 +13,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify every payload chunk and reconstruct archive
+      - name: Produce payload diagnostic report
         shell: bash
         run: |
-          set -euo pipefail
-          wc -c \
-            ai_image_finisher_ci/source.00.txt \
-            ai_image_finisher_ci/source.01.txt \
-            ai_image_finisher_ci/source.02.txt \
-            ai_image_finisher_ci/source.03part0.txt \
-            ai_image_finisher_ci/source.03part1.txt \
-            ai_image_finisher_ci/source.04.txt
-          sha256sum \
-            ai_image_finisher_ci/source.00.txt \
-            ai_image_finisher_ci/source.01.txt \
-            ai_image_finisher_ci/source.02.txt \
-            ai_image_finisher_ci/source.03part0.txt \
-            ai_image_finisher_ci/source.03part1.txt \
-            ai_image_finisher_ci/source.04.txt
-          python3 - <<'PY'
-          import base64, hashlib, pathlib
+          set +e
+          {
+            echo '=== sizes ==='
+            wc -c \
+              ai_image_finisher_ci/source.00.txt \
+              ai_image_finisher_ci/source.01.txt \
+              ai_image_finisher_ci/source.02.txt \
+              ai_image_finisher_ci/source.03part0.txt \
+              ai_image_finisher_ci/source.03part1.txt \
+              ai_image_finisher_ci/source.04.txt
+            echo '=== hashes ==='
+            sha256sum \
+              ai_image_finisher_ci/source.00.txt \
+              ai_image_finisher_ci/source.01.txt \
+              ai_image_finisher_ci/source.02.txt \
+              ai_image_finisher_ci/source.03part0.txt \
+              ai_image_finisher_ci/source.03part1.txt \
+              ai_image_finisher_ci/source.04.txt
+            echo '=== python reconstruction ==='
+            python3 - <<'PY'
+          import base64, hashlib, pathlib, traceback
           names = [
               'source.00.txt', 'source.01.txt', 'source.02.txt',
               'source.03part0.txt', 'source.03part1.txt', 'source.04.txt'
@@ -46,20 +50,35 @@ jobs:
               'source.03part1.txt': '84ad0320c17cceb8cb0ff9a1bc1ec1c7baa4926eb4b8b1662730f65e35f15e8a',
               'source.04.txt': '8c8473b9eceeca46fd9f5e5122e0e5543ed41beb53f4b30fc5d75980f029bc03',
           }
-          pieces = []
-          for name in names:
-              raw = (root / name).read_bytes()
-              digest = hashlib.sha256(raw).hexdigest()
-              print(name, len(raw), digest, 'expected', expected[name])
-              if digest != expected[name]:
-                  print('MISMATCH', name)
-              pieces.append(raw.replace(b'\r', b'').replace(b'\n', b''))
-          encoded = b''.join(pieces)
-          decoded = base64.b64decode(encoded, validate=True)
-          pathlib.Path('source.tar.gz').write_bytes(decoded)
-          print('archive bytes', len(decoded))
-          print('archive sha256', hashlib.sha256(decoded).hexdigest())
-          assert hashlib.sha256(decoded).hexdigest() == 'bf7fdcbba79619689caa4e589279793878e3804f52fa0f5b2552290723a87e8a'
+          try:
+              pieces = []
+              for name in names:
+                  raw = (root / name).read_bytes()
+                  digest = hashlib.sha256(raw).hexdigest()
+                  print(name, len(raw), digest, 'expected', expected[name], 'MATCH', digest == expected[name])
+                  pieces.append(raw.replace(b'\r', b'').replace(b'\n', b''))
+              encoded = b''.join(pieces)
+              print('encoded bytes', len(encoded))
+              decoded = base64.b64decode(encoded, validate=True)
+              pathlib.Path('source.tar.gz').write_bytes(decoded)
+              print('archive bytes', len(decoded))
+              print('archive sha256', hashlib.sha256(decoded).hexdigest())
+          except Exception:
+              traceback.print_exc()
           PY
-          gzip -t source.tar.gz
-          tar -tzf source.tar.gz | head -30
+            echo '=== gzip ==='
+            gzip -t source.tar.gz
+            echo "gzip_exit=$?"
+            echo '=== tar ==='
+            tar -tzf source.tar.gz | head -30
+            echo "tar_exit=$?"
+          } > payload-diagnostic.txt 2>&1
+          cat payload-diagnostic.txt
+          exit 0
+      - name: Upload payload diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_PAYLOAD_DIAGNOSTIC
+          path: payload-diagnostic.txt
+          if-no-files-found: error
+          retention-days: 7
