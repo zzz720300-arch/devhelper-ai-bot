@@ -51,10 +51,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up official Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
+      - name: Install official Gradle 8.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$RUNNER_TEMP/gradle-8.13-bin.zip" \
+            'https://services.gradle.org/distributions/gradle-8.13-bin.zip'
+          echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  '"$RUNNER_TEMP"'/gradle-8.13-bin.zip' | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle-8.13-bin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/gradle-8.13/bin/gradle" --version
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -171,7 +178,7 @@ jobs:
           AI IMAGE FINISHER 1.0.0 REAL DELIVERY
           ====================================
           JDK: 17
-          Gradle: 8.13 official distribution
+          Gradle: 8.13 official distribution, SHA-256 verified
           Android compile/target SDK: 36
           Build Tools: 36.1.0
           Functions: resize, local ONNX AI upscale x2/x4, local ONNX background removal, editable SVG vectorization
