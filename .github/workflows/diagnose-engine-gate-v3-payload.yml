@@ -1,0 +1,42 @@
+name: Diagnose Engine Gate V3 Payload
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record payload sizes and hashes
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== FILES ==='
+            wc -c engine-gate-v3/*.b64
+            echo '=== HASHES ==='
+            sha256sum engine-gate-v3/*.b64
+            cat engine-gate-v3/source.000.b64 engine-gate-v3/source.001.b64 \
+                engine-gate-v3/source.002.b64 engine-gate-v3/source.003.b64 \
+                engine-gate-v3/source.004.b64 engine-gate-v3/source.005a.b64 \
+                engine-gate-v3/source.005b.b64 engine-gate-v3/source.006a.b64 \
+                engine-gate-v3/source.006b.b64 engine-gate-v3/source.007.b64 \
+                | tr -d '\r\n' | base64 -d > source.tar.gz
+            echo '=== ARCHIVE ==='
+            wc -c source.tar.gz
+            sha256sum source.tar.gz
+            gzip -t source.tar.gz
+            echo gzip_exit=$?
+            tar -tzf source.tar.gz | head -40
+            echo tar_exit=$?
+          } > engine-gate-v3-payload.txt 2>&1
+          cat engine-gate-v3-payload.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ENGINE_GATE_V3_PAYLOAD_DIAGNOSTIC
+          path: engine-gate-v3-payload.txt
+          if-no-files-found: error
+          retention-days: 7
