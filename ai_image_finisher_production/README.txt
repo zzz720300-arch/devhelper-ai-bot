@@ -1,0 +1,1 @@
+AI Image Finisher production Engine Gate payload. Temporary CI branch; source archive is stored as a binary Git blob and restored only for verified builds.
