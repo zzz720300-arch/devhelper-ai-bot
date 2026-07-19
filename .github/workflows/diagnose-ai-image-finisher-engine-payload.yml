@@ -1,0 +1,41 @@
+name: Diagnose AI Image Finisher Engine Payload
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and record payload integrity
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== PART SIZES ==='
+            wc -c engine-gate/source.part00 engine-gate/source.part01 engine-gate/source.part02 engine-gate/source.part03
+            echo '=== PART HASHES ==='
+            sha256sum engine-gate/source.part00 engine-gate/source.part01 engine-gate/source.part02 engine-gate/source.part03
+            cat engine-gate/source.part00 engine-gate/source.part01 engine-gate/source.part02 engine-gate/source.part03 > source.tar.gz
+            echo '=== ARCHIVE ==='
+            wc -c source.tar.gz
+            sha256sum source.tar.gz
+            gzip -t source.tar.gz
+            echo "gzip_exit=$?"
+            tar -tzf source.tar.gz | head -50
+            echo "tar_exit=$?"
+          } > engine-payload-diagnostic.txt 2>&1
+          cat engine-payload-diagnostic.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_ENGINE_PAYLOAD_DIAGNOSTIC
+          path: engine-payload-diagnostic.txt
+          if-no-files-found: error
+          retention-days: 7
