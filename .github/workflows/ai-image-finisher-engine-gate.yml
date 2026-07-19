@@ -1,0 +1,311 @@
+name: AI Image Finisher Production Engine Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA256: d46a49a69e925a5c15d70f72a22080bd8fe8bc3e77faed64822facc1a2ca8eaa
+  GRADLE_SHA256: 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+  NCNN_SHA256: 26909c92eed35afed4a966b5e9e503fcb0a529691ea3f910ec2c94a4fff52804
+  NDK_VERSION: 29.0.14206865
+  REALSR_COMMIT: 0eb16763761e46f55c6223439ca1ad20216bc4ab
+
+jobs:
+  engine-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout Engine Gate payload
+        uses: actions/checkout@v4
+
+      - name: Restore and verify production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat engine-gate/source.part00 \
+              engine-gate/source.part01 \
+              engine-gate/source.part02 \
+              engine-gate/source.part03 > source.tar.gz
+          echo "$SOURCE_SHA256  source.tar.gz" | sha256sum -c -
+          gzip -t source.tar.gz
+          tar -xzf source.tar.gz
+          test -f AI_IMAGE_FINISHER_PRODUCTION/settings.gradle.kts
+          test -f AI_IMAGE_FINISHER_PRODUCTION/native/build-upscale.sh
+          test -f AI_IMAGE_FINISHER_PRODUCTION/native/build-vtracer.sh
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install verified Gradle 8.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$RUNNER_TEMP/gradle-8.13-bin.zip" \
+            https://services.gradle.org/distributions/gradle-8.13-bin.zip
+          echo "$GRADLE_SHA256  $RUNNER_TEMP/gradle-8.13-bin.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle-8.13-bin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/gradle-8.13/bin/gradle" --version
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-36' \
+            'build-tools;36.1.0' \
+            'platform-tools' \
+            "ndk;$NDK_VERSION" \
+            'cmake;3.22.1' \
+            'emulator' \
+            'system-images;android-35;aosp_atd;x86_64'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install Rust and cargo-ndk
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --version 3.5.4 --locked
+          rustc --version
+          cargo ndk --version
+
+      - name: Download and verify ncnn and RealSR sources
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          mkdir -p vendor/ncnn-extract vendor/realsr
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o vendor/ncnn.zip \
+            https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip
+          echo "$NCNN_SHA256  vendor/ncnn.zip" | sha256sum -c -
+          unzip -q vendor/ncnn.zip -d vendor/ncnn-extract
+          NCNN_ROOT=$(find vendor/ncnn-extract -type d -path '*/arm64-v8a/lib/cmake/ncnn' -print -quit | sed 's#/arm64-v8a/lib/cmake/ncnn##')
+          test -n "$NCNN_ROOT"
+          test -f "$NCNN_ROOT/arm64-v8a/lib/cmake/ncnn/ncnnConfig.cmake"
+          test -f "$NCNN_ROOT/x86_64/lib/cmake/ncnn/ncnnConfig.cmake"
+          echo "NCNN_ROOT=$PWD/$NCNN_ROOT" >> "$GITHUB_ENV"
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o vendor/realsr.zip \
+            "https://github.com/tumuyan/RealSR-NCNN-Android/archive/$REALSR_COMMIT.zip"
+          unzip -q vendor/realsr.zip -d vendor/realsr
+          REALSR_VENDOR_DIR=$(find vendor/realsr -mindepth 1 -maxdepth 1 -type d -print -quit)
+          test -f "$REALSR_VENDOR_DIR/RealSR-NCNN-Android-CLI/RealSR/src/main/jni/realsr.cpp"
+          echo "REALSR_VENDOR_DIR=$PWD/$REALSR_VENDOR_DIR" >> "$GITHUB_ENV"
+
+      - name: Download, verify and register engine models
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          BG=engine/background-onnx/src/main/assets/models
+          UP=engine/upscale-ncnn/src/main/assets/models
+          mkdir -p "$BG" "$UP"
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$BG/birefnet_swin_tiny.ort" \
+            'https://huggingface.co/T8RIN/imagetoolbox-models/resolve/1bd9be2/birefnet_swin_tiny.ort?download=true'
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$BG/u2netp.onnx" \
+            'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  engine/background-onnx/src/main/assets/models/u2netp.onnx' | sha256sum -c -
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$UP/esrgan_bstexty_x2.param" \
+            'https://huggingface.co/tumuyan2/realsr-models/resolve/bd51753325d89cbb32d69dfe0f5f543d68e8eda2/models-ESRGAN-BSTexty_86000G/x2.param?download=true'
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$UP/esrgan_bstexty_x2.bin" \
+            'https://huggingface.co/tumuyan2/realsr-models/resolve/bd51753325d89cbb32d69dfe0f5f543d68e8eda2/models-ESRGAN-BSTexty_86000G/x2.bin?download=true'
+          echo '384a3bda20ac989451996b2983db36aa313b36ebb6d87ed6a9c08104291c8252  engine/upscale-ncnn/src/main/assets/models/esrgan_bstexty_x2.bin' | sha256sum -c -
+
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$UP/realesr_general_x4v3.param" \
+            'https://huggingface.co/tumuyan2/realsr-models/resolve/0fe68041370150c7695816e229dc982bfc06ed58/models-RealeSR-general-v3/x4.param?download=true'
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o "$UP/realesr_general_x4v3.bin" \
+            'https://huggingface.co/tumuyan2/realsr-models/resolve/0fe68041370150c7695816e229dc982bfc06ed58/models-RealeSR-general-v3/x4.bin?download=true'
+          echo '01450f4a79b81c0f1f3eeefc31121167886125c25e41a6d4773e8ec8062528a1  engine/upscale-ncnn/src/main/assets/models/realesr_general_x4v3.bin' | sha256sum -c -
+
+          BIR_SHA=$(sha256sum "$BG/birefnet_swin_tiny.ort" | awk '{print $1}')
+          X2_PARAM_SHA=$(sha256sum "$UP/esrgan_bstexty_x2.param" | awk '{print $1}')
+          X2_BIN_SHA=$(sha256sum "$UP/esrgan_bstexty_x2.bin" | awk '{print $1}')
+          X4_PARAM_SHA=$(sha256sum "$UP/realesr_general_x4v3.param" | awk '{print $1}')
+          X4_BIN_SHA=$(sha256sum "$UP/realesr_general_x4v3.bin" | awk '{print $1}')
+          test "$(stat -c%s "$BG/birefnet_swin_tiny.ort")" -gt 100000000
+          test "$(stat -c%s "$UP/esrgan_bstexty_x2.bin")" -gt 1000000
+          test "$(stat -c%s "$UP/realesr_general_x4v3.bin")" -gt 1000000
+
+          python3 - <<PY
+          from pathlib import Path
+          replacements = {
+              '__BIREFNET_SHA256__': '$BIR_SHA',
+              '__X2_PARAM_SHA__': '$X2_PARAM_SHA',
+              '__X2_BIN_SHA__': '$X2_BIN_SHA',
+              '__X4_PARAM_SHA__': '$X4_PARAM_SHA',
+              '__X4_BIN_SHA__': '$X4_BIN_SHA',
+          }
+          files = [
+              Path('engine/background-onnx/src/main/java/ru/quantai/imagefinisher/engine/background/BiRefNetBackgroundEngine.kt'),
+              Path('engine/upscale-ncnn/src/main/java/ru/quantai/imagefinisher/engine/upscale/NcnnUpscaleEngine.kt'),
+          ]
+          for path in files:
+              text = path.read_text()
+              for old, new in replacements.items():
+                  text = text.replace(old, new)
+              path.write_text(text)
+          manifest = Path('docs/MODEL_MANIFEST.json')
+          text = manifest.read_text()
+          text = text.replace('PATCHED_AND_VERIFIED_BY_ENGINE_GATE', '$BIR_SHA', 1)
+          text = text.replace('PATCHED_AND_VERIFIED_BY_ENGINE_GATE', '$X2_PARAM_SHA', 1)
+          text = text.replace('PATCHED_AND_VERIFIED_BY_ENGINE_GATE', '$X4_PARAM_SHA', 1)
+          manifest.write_text(text)
+          PY
+
+          cat > docs/ENGINE_GATE_MODEL_HASHES.txt <<EOF
+          birefnet_swin_tiny.ort $BIR_SHA
+          u2netp.onnx 16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a
+          esrgan_bstexty_x2.param $X2_PARAM_SHA
+          esrgan_bstexty_x2.bin $X2_BIN_SHA
+          realesr_general_x4v3.param $X4_PARAM_SHA
+          realesr_general_x4v3.bin $X4_BIN_SHA
+          EOF
+
+      - name: Smoke-test BiRefNet model with ONNX Runtime
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check onnxruntime==1.27.0 numpy==2.2.6 pillow==11.3.0
+          python3 - <<'PY'
+          import numpy as np
+          import onnxruntime as ort
+          from PIL import Image
+          model='engine/background-onnx/src/main/assets/models/birefnet_swin_tiny.ort'
+          image=Image.open('engine/background-onnx/src/main/assets/selftest/subject.png').convert('RGB').resize((1024,1024),Image.Resampling.LANCZOS)
+          x=np.asarray(image,dtype=np.float32)/255.0
+          x=np.transpose(x,(2,0,1))[None]
+          session=ort.InferenceSession(model,providers=['CPUExecutionProvider'])
+          output=session.run(None,{session.get_inputs()[0].name:x})[0]
+          mask=np.asarray(output).reshape(-1)
+          assert np.isfinite(mask).all()
+          assert float(mask.max()-mask.min()) > 0.10
+          print('BIREFNET_SMOKE_PASS', output.shape, float(mask.min()), float(mask.max()))
+          PY
+
+      - name: Build native ncnn and VTracer libraries
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          chmod +x native/build-upscale.sh native/build-vtracer.sh
+          native/build-upscale.sh
+          native/build-vtracer.sh
+          test -s engine/upscale-ncnn/src/main/jniLibs/arm64-v8a/libimagefinisher_upscale.so
+          test -s engine/upscale-ncnn/src/main/jniLibs/x86_64/libimagefinisher_upscale.so
+          test -s engine/vector-vtracer/src/main/jniLibs/arm64-v8a/libimagefinisher_vtracer.so
+          test -s engine/vector-vtracer/src/main/jniLibs/x86_64/libimagefinisher_vtracer.so
+          file engine/*/src/main/jniLibs/*/*.so
+
+      - name: Compile unit tests, AARs and technical APK
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace --console=plain \
+            testDebugUnitTest \
+            lintDebug \
+            :engine:resize-aire:assembleRelease \
+            :engine:background-onnx:assembleRelease \
+            :engine:upscale-ncnn:assembleRelease \
+            :engine:vector-vtracer:assembleRelease \
+            :integration:api:assembleRelease \
+            :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/gradle-engine-gate.log"
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Execute all four engines inside Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: aosp_atd
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: cd AI_IMAGE_FINISHER_PRODUCTION && gradle --no-daemon --stacktrace connectedDebugAndroidTest
+
+      - name: Verify Engine Gate outputs and package evidence
+        shell: bash
+        working-directory: AI_IMAGE_FINISHER_PRODUCTION
+        run: |
+          set -euo pipefail
+          mkdir -p output/engine-gate/aar output/engine-gate/native output/engine-gate/reports
+          cp engine/resize-aire/build/outputs/aar/*release.aar output/engine-gate/aar/
+          cp engine/background-onnx/build/outputs/aar/*release.aar output/engine-gate/aar/
+          cp engine/upscale-ncnn/build/outputs/aar/*release.aar output/engine-gate/aar/
+          cp engine/vector-vtracer/build/outputs/aar/*release.aar output/engine-gate/aar/
+          cp integration/api/build/outputs/aar/*release.aar output/engine-gate/aar/
+          cp app/build/outputs/apk/debug/*.apk output/engine-gate/
+          cp -r engine/upscale-ncnn/src/main/jniLibs output/engine-gate/native/upscale
+          cp -r engine/vector-vtracer/src/main/jniLibs output/engine-gate/native/vtracer
+          cp docs/ENGINE_GATE_MODEL_HASHES.txt docs/MODEL_MANIFEST.json output/engine-gate/reports/
+          cp -r app/build/reports/androidTests/connected output/engine-gate/reports/android-tests
+          cp "$GITHUB_WORKSPACE/gradle-engine-gate.log" output/engine-gate/reports/
+          cat > output/engine-gate/ENGINE_GATE_REPORT.md <<'EOF'
+          # AI Image Finisher Production Engine Gate
+
+          Status: PASSED
+
+          - Resize: Aire 0.18.1 real native resize executed on Android.
+          - Background: BiRefNet Tiny real ONNX Runtime inference executed on Android.
+          - Upscale: separate x2 and x4 ncnn models executed on Android.
+          - Vector: VTracer 0.6.4 Rust JNI produced editable SVG paths on Android.
+          - No final product UI is included at this gate.
+          EOF
+          zip -qr output/engine-gate/AI_IMAGE_FINISHER_ENGINE_GATE_SOURCE_WITH_MODELS.zip . \
+            -x '*/build/*' '.gradle/*' 'vendor/*' 'output/engine-gate/AI_IMAGE_FINISHER_ENGINE_GATE_SOURCE_WITH_MODELS.zip'
+          (cd output/engine-gate && sha256sum *.apk aar/*.aar native/*/*/*.so AI_IMAGE_FINISHER_ENGINE_GATE_SOURCE_WITH_MODELS.zip > SHA256SUMS.txt)
+          find output/engine-gate -maxdepth 4 -type f -printf '%p %s bytes\n'
+
+      - name: Upload Engine Gate delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_PRODUCTION_ENGINE_GATE_PASSED
+          path: AI_IMAGE_FINISHER_PRODUCTION/output/engine-gate/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_ENGINE_GATE_DIAGNOSTICS
+          path: |
+            gradle-engine-gate.log
+            AI_IMAGE_FINISHER_PRODUCTION/**/build/reports/
+            AI_IMAGE_FINISHER_PRODUCTION/docs/ENGINE_GATE_MODEL_HASHES.txt
+          if-no-files-found: warn
+          retention-days: 7
