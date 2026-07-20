@@ -40,7 +40,7 @@ AIFV5_EOF
 mkdir -p "$ROOT/native/vtracer-jni/src"
 cat > "$ROOT/native/vtracer-jni/src/converter.rs" <<'AIFV5_EOF'
 use std::path::Path; use std::{fs::File,io::Write}; use crate::config::{ColorMode,Config,ConverterConfig,Hierarchical}; use crate::svg::SvgFile; use fastrand::Rng; use visioncortex::color_clusters::{KeyingAction,Runner,RunnerConfig,HIERARCHICAL_MAX}; use visioncortex::{Color,ColorImage,ColorName};
-const KEYING_THRESHOLD:f32=.2;
+const KEYING_THRESHOLD:f32=0.2;
 pub fn convert_image_to_svg(input:&Path,output:&Path,config:Config)->Result<(),String>{let img=image::open(input).map_err(|e|e.to_string())?.to_rgba8();let(w,h)=(img.width() as usize,img.height() as usize);let ci=ColorImage{pixels:img.as_raw().to_vec(),width:w,height:h};let svg=convert(ci,config)?;let mut f=File::create(output).map_err(|e|e.to_string())?;write!(&mut f,"{}",svg).map_err(|e|e.to_string())}
 fn convert(img:ColorImage,config:Config)->Result<SvgFile,String>{let c=config.into_converter_config();match c.color_mode{ColorMode::Color=>color(img,c),ColorMode::Binary=>binary(img,c)}}
 fn color_exists(img:&ColorImage,c:Color)->bool{for y in 0..img.height{for x in 0..img.width{let p=img.get_pixel(x,y);if p.r==c.r&&p.g==c.g&&p.b==c.b{return true}}}false}
