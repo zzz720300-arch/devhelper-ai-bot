@@ -1,0 +1,91 @@
+name: AI Image Finisher V5 ncnn Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: aif-ncnn-diagnostic-v5
+  NDK_VERSION: 29.0.14206865
+  NCNN_SHA256: 26909c92eed35afed4a966b5e9e503fcb0a529691ea3f910ec2c94a4fff52804
+  REALSR_COMMIT: 0eb16763761e46f55c6223439ca1ad20216bc4ab
+
+jobs:
+  ncnn-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate native source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PROJECT_DIR" && mkdir -p "$PROJECT_DIR"
+          for script in aif-v5-bootstrap/bootstrap-*.sh; do bash "$script" "$PROJECT_DIR"; done
+          test -f "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp/realsr_jni.cpp"
+          test -f "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp/CMakeLists.txt"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;$NDK_VERSION" 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Download verified ncnn and RealSR sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vendor/ncnn vendor/realsr
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/ncnn.zip" https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip
+          echo "$NCNN_SHA256  $RUNNER_TEMP/ncnn.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/ncnn.zip" -d vendor/ncnn
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/realsr.tar.gz" "https://codeload.github.com/tumuyan/RealSR-NCNN-Android/tar.gz/$REALSR_COMMIT"
+          tar -xzf "$RUNNER_TEMP/realsr.tar.gz" -C vendor/realsr
+
+      - name: Configure and build both ABIs with full logs
+        shell: bash
+        run: |
+          set +e
+          : > ncnn-build.log
+          REALSR_SRC=$(realpath "$(dirname "$(find vendor/realsr -path '*/RealSR-NCNN-Android-CLI/RealSR/src/main/jni/realsr.cpp' -print -quit)")")
+          echo "REALSR_SRC=$REALSR_SRC" | tee -a ncnn-build.log
+          TOTAL=0
+          for ABI in arm64-v8a x86_64; do
+            echo "===== ABI $ABI =====" | tee -a ncnn-build.log
+            CFG=$(realpath "$(find vendor/ncnn -path "*/$ABI/lib/cmake/ncnn/ncnnConfig.cmake" -print -quit)")
+            echo "NCNN_CONFIG=$CFG" | tee -a ncnn-build.log
+            B="$RUNNER_TEMP/upscale-$ABI"
+            cmake -S "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp" -B "$B" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_shared \
+              -Dncnn_DIR="$(dirname "$CFG")" -DREALSR_SRC_DIR="$REALSR_SRC" \
+              2>&1 | tee -a ncnn-build.log
+            CONFIG_CODE=${PIPESTATUS[0]}
+            if [ "$CONFIG_CODE" -ne 0 ]; then TOTAL=$CONFIG_CODE; continue; fi
+            cmake --build "$B" --config Release -j2 2>&1 | tee -a ncnn-build.log
+            BUILD_CODE=${PIPESTATUS[0]}
+            if [ "$BUILD_CODE" -ne 0 ]; then TOTAL=$BUILD_CODE; fi
+          done
+          echo "$TOTAL" > ncnn-build-exit.txt
+          exit "$TOTAL"
+
+      - name: Upload ncnn diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V5_NCNN_DIAGNOSTICS
+          path: |
+            ncnn-build.log
+            ncnn-build-exit.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,140 @@
+name: AI Image Finisher V5 Background Runtime Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: aif-engine-gate-v5
+  GRADLE_SHA256: 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+
+jobs:
+  background-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate deterministic Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PROJECT_DIR"
+          mkdir -p "$PROJECT_DIR"
+          for script in aif-v5-bootstrap/bootstrap-*.sh; do bash "$script" "$PROJECT_DIR"; done
+          grep -q 'AIF_BG' "$PROJECT_DIR/engine/background-onnx/src/main/java/ru/quantai/imagefinisher/engine/background/BiRefNetBackgroundEngine.kt"
+          grep -q 'b_backgroundEngineExecutesInsideAndroid' "$PROJECT_DIR/app/src/androidTest/java/ru/quantai/imagefinisher/app/EngineGateInstrumentedTest.kt"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install verified Gradle 8.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.13-bin.zip
+          echo "$GRADLE_SHA256  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-36' 'build-tools;36.1.0' 'platform-tools' \
+            'emulator' 'system-images;android-35;google_apis;x86_64'
+
+      - name: Download verified background models and self-test image
+        shell: bash
+        run: |
+          set -euo pipefail
+          BG="$PROJECT_DIR/engine/background-onnx/src/main/assets/models"
+          SELF="$PROJECT_DIR/engine/background-onnx/src/main/assets/selftest"
+          mkdir -p "$BG" "$SELF"
+          curl -L --fail --retry 5 --retry-all-errors -o "$BG/birefnet_lite.onnx" 'https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx?download=true'
+          echo '5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333  '"$BG"'/birefnet_lite.onnx' | sha256sum -c -
+          curl -L --fail --retry 5 --retry-all-errors -o "$BG/u2netp.onnx" 'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  '"$BG"'/u2netp.onnx' | sha256sum -c -
+          python3 -m pip install --quiet --disable-pip-version-check pillow==11.3.0 scikit-image==0.25.2
+          python3 - <<'PY'
+          from PIL import Image
+          from skimage import data
+          Image.fromarray(data.astronaut()).convert('RGB').save('aif-engine-gate-v5/engine/background-onnx/src/main/assets/selftest/subject.png')
+          PY
+          sha256sum "$BG"/* "$SELF"/* > background-assets.sha256
+
+      - name: Compile background diagnostic APK and test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" --no-daemon --stacktrace --console=plain \
+            :app:assembleDebug :app:assembleDebugAndroidTest \
+            2>&1 | tee "$GITHUB_WORKSPACE/background-build.log"
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Execute only BiRefNet inside Android and capture process death evidence
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 6144M
+          heap-size: 2048M
+          disable-animations: true
+          script: |
+            set +e
+            ROOT="$GITHUB_WORKSPACE"
+            adb logcat -c
+            adb shell getprop > "$ROOT/background-device-props.txt" 2>&1 || true
+            gradle -p "$ROOT/aif-engine-gate-v5" --no-daemon --stacktrace --console=plain \
+              "-Pandroid.testInstrumentationRunnerArguments.class=ru.quantai.imagefinisher.app.EngineGateInstrumentedTest#b_backgroundEngineExecutesInsideAndroid" \
+              :app:connectedDebugAndroidTest 2>&1 | tee "$ROOT/background-android-test.log"
+            CODE=${PIPESTATUS[0]}
+            adb logcat -d -v threadtime > "$ROOT/background-logcat.txt" 2>&1 || true
+            adb logcat -b crash -d -v threadtime > "$ROOT/background-crash-buffer.txt" 2>&1 || true
+            adb shell dumpsys activity exit-info ru.quantai.imagefinisher.app > "$ROOT/background-exit-info.txt" 2>&1 || true
+            adb shell dumpsys dropbox --print data_app_native_crash > "$ROOT/background-native-crash-dropbox.txt" 2>&1 || true
+            adb shell dumpsys meminfo ru.quantai.imagefinisher.app > "$ROOT/background-meminfo.txt" 2>&1 || true
+            echo "$CODE" > "$ROOT/background-test-exit.txt"
+            exit "$CODE"
+
+      - name: Upload complete background runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V5_BACKGROUND_RUNTIME_DIAGNOSTIC
+          path: |
+            ${{ github.workspace }}/background-build.log
+            ${{ github.workspace }}/background-assets.sha256
+            ${{ github.workspace }}/background-device-props.txt
+            ${{ github.workspace }}/background-android-test.log
+            ${{ github.workspace }}/background-logcat.txt
+            ${{ github.workspace }}/background-crash-buffer.txt
+            ${{ github.workspace }}/background-exit-info.txt
+            ${{ github.workspace }}/background-native-crash-dropbox.txt
+            ${{ github.workspace }}/background-meminfo.txt
+            ${{ github.workspace }}/background-test-exit.txt
+            ${{ github.workspace }}/aif-engine-gate-v5/app/build/reports/androidTests/connected/**
+            ${{ github.workspace }}/aif-engine-gate-v5/app/build/outputs/androidTest-results/**
+          if-no-files-found: warn
+          retention-days: 7
