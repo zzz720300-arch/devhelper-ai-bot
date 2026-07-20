@@ -148,7 +148,12 @@ jobs:
           set -euo pipefail
           source "$HOME/.cargo/env"
           cd "$PROJECT_DIR/native/vtracer-jni"
-          cargo ndk -t arm64-v8a -t x86_64 -p 26 -o ../../engine/vector-vtracer/src/main/jniLibs build --release
+          set +e
+          cargo ndk -t arm64-v8a -t x86_64 -p 26 -o ../../engine/vector-vtracer/src/main/jniLibs build --release 2>&1 | tee "$GITHUB_WORKSPACE/vtracer-build.log"
+          CODE=${PIPESTATUS[0]}
+          echo "$CODE" > "$GITHUB_WORKSPACE/vtracer-build-exit.txt"
+          set -e
+          test "$CODE" -eq 0
           test -s ../../engine/vector-vtracer/src/main/jniLibs/arm64-v8a/libimagefinisher_vtracer.so
           test -s ../../engine/vector-vtracer/src/main/jniLibs/x86_64/libimagefinisher_vtracer.so
 
@@ -242,6 +247,8 @@ jobs:
           path: |
             gradle-v5.log
             gradle-v5-exit.txt
+            vtracer-build.log
+            vtracer-build-exit.txt
             model-files.sha256
             realsr-source.sha256
             birefnet-smoke-mask.png
