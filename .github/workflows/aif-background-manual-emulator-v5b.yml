@@ -1,0 +1,144 @@
+name: AI Image Finisher V5 BiRefNet Manual Emulator Diagnostic V2
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: aif-engine-gate-v5
+  GRADLE_SHA256: 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+
+jobs:
+  birefnet-manual-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate project with runtime markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PROJECT_DIR" && mkdir -p "$PROJECT_DIR"
+          for script in aif-v5-bootstrap/bootstrap-*.sh; do bash "$script" "$PROJECT_DIR"; done
+          grep -q 'INFERENCE_BEGIN' "$PROJECT_DIR/engine/background-onnx/src/main/java/ru/quantai/imagefinisher/engine/background/BiRefNetBackgroundEngine.kt"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Gradle and Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-all-errors -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.13-bin.zip
+          echo "$GRADLE_SHA256  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK and system image
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
+
+      - name: Embed verified BiRefNet and U2NetP
+        shell: bash
+        run: |
+          set -euo pipefail
+          BG="$PROJECT_DIR/engine/background-onnx/src/main/assets/models"
+          SELF="$PROJECT_DIR/engine/background-onnx/src/main/assets/selftest"
+          mkdir -p "$BG" "$SELF"
+          curl -L --fail --retry 5 --retry-all-errors -o "$BG/birefnet_lite.onnx" 'https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx?download=true'
+          echo '5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333  '"$BG"'/birefnet_lite.onnx' | sha256sum -c -
+          curl -L --fail --retry 5 --retry-all-errors -o "$BG/u2netp.onnx" 'https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/main/u2netp.onnx?download=true'
+          echo '16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  '"$BG"'/u2netp.onnx' | sha256sum -c -
+          python3 -m pip install --quiet --disable-pip-version-check pillow==11.3.0 scikit-image==0.25.2
+          python3 - <<'PY'
+          from PIL import Image
+          from skimage import data
+          Image.fromarray(data.astronaut()).convert('RGB').save('aif-engine-gate-v5/engine/background-onnx/src/main/assets/selftest/subject.png')
+          PY
+
+      - name: Build APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" --no-daemon --stacktrace --console=plain :app:assembleDebug :app:assembleDebugAndroidTest 2>&1 | tee birefnet-v2-build.log
+
+      - name: Start emulator with bounded boot time
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo chmod 666 /dev/kvm || true
+          echo no | avdmanager create avd --force --name aif_bg_v2 --package 'system-images;android-35;google_apis;x86_64' --device 'pixel_6'
+          nohup "$ANDROID_HOME/emulator/emulator" -avd aif_bg_v2 \
+            -no-window -noaudio -no-boot-anim -no-snapshot -no-metrics \
+            -gpu swiftshader_indirect -accel on -memory 4096 -cores 4 -partition-size 4096 \
+            > "$GITHUB_WORKSPACE/birefnet-v2-emulator.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/birefnet-v2-emulator.pid"
+          adb start-server
+          if ! timeout 180s adb wait-for-device; then
+            echo 'ADB_DEVICE_TIMEOUT' > "$GITHUB_WORKSPACE/birefnet-v2-boot-status.txt"
+            exit 1
+          fi
+          if ! timeout 180s bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 2; done'; then
+            echo 'ANDROID_BOOT_TIMEOUT' > "$GITHUB_WORKSPACE/birefnet-v2-boot-status.txt"
+            exit 1
+          fi
+          echo 'BOOT_OK' > "$GITHUB_WORKSPACE/birefnet-v2-boot-status.txt"
+          adb shell getprop > "$GITHUB_WORKSPACE/birefnet-v2-device-props.txt"
+          adb shell df -h > "$GITHUB_WORKSPACE/birefnet-v2-disk.txt"
+
+      - name: Run BiRefNet and capture every Android buffer
+        shell: bash
+        run: |
+          set +e
+          TARGET_APK=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -name '*debug.apk' ! -name '*androidTest*' -type f | head -1)
+          TEST_APK=$(find "$PROJECT_DIR/app/build/outputs/apk/androidTest/debug" -name '*.apk' -type f | head -1)
+          adb install -r "$TARGET_APK" > birefnet-v2-install-target.txt 2>&1
+          TARGET_CODE=$?
+          adb install -r "$TEST_APK" > birefnet-v2-install-test.txt 2>&1
+          TEST_INSTALL_CODE=$?
+          adb logcat -c
+          adb shell am instrument -w -r \
+            -e class 'ru.quantai.imagefinisher.app.EngineGateInstrumentedTest#b_backgroundEngineExecutesInsideAndroid' \
+            ru.quantai.imagefinisher.app.test/androidx.test.runner.AndroidJUnitRunner \
+            > birefnet-v2-instrumentation.txt 2>&1
+          INSTRUMENT_CODE=$?
+          adb logcat -d -v threadtime > birefnet-v2-logcat.txt 2>&1 || true
+          adb logcat -b crash -d -v threadtime > birefnet-v2-crash-buffer.txt 2>&1 || true
+          adb shell dumpsys activity exit-info ru.quantai.imagefinisher.app > birefnet-v2-exit-info.txt 2>&1 || true
+          adb shell dumpsys dropbox --print data_app_native_crash > birefnet-v2-native-crash.txt 2>&1 || true
+          adb shell dumpsys dropbox --print SYSTEM_LAST_KMSG > birefnet-v2-last-kmsg.txt 2>&1 || true
+          adb shell dumpsys meminfo > birefnet-v2-all-meminfo.txt 2>&1 || true
+          grep -E 'AIF_BG|AIF_ENGINE_GATE|Fatal signal|FATAL EXCEPTION|OutOfMemory|lowmemory|lmkd|onnxruntime|am_crash|am_kill|am_proc_died' birefnet-v2-logcat.txt > birefnet-v2-key-events.txt || true
+          printf 'target_install=%s\ntest_install=%s\ninstrument=%s\n' "$TARGET_CODE" "$TEST_INSTALL_CODE" "$INSTRUMENT_CODE" > birefnet-v2-exit-codes.txt
+          if [ "$TARGET_CODE" -ne 0 ] || [ "$TEST_INSTALL_CODE" -ne 0 ] || ! grep -q 'OK (1 test)' birefnet-v2-instrumentation.txt; then exit 1; fi
+
+      - name: Stop emulator
+        if: always()
+        shell: bash
+        run: |
+          adb emu kill || true
+          if [ -f birefnet-v2-emulator.pid ]; then kill "$(cat birefnet-v2-emulator.pid)" || true; fi
+
+      - name: Upload bounded manual diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V5_BIREFNET_MANUAL_V2_EVIDENCE
+          path: |
+            birefnet-v2-*.txt
+            birefnet-v2-*.log
+            birefnet-v2-emulator.pid
+          if-no-files-found: warn
+          retention-days: 7
