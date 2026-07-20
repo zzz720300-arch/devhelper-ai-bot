@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$PROJECT_DIR" && mkdir -p "$PROJECT_DIR"
-          bash aif-v5-bootstrap/bootstrap-03.sh "$PROJECT_DIR"
+          for script in aif-v5-bootstrap/bootstrap-*.sh; do bash "$script" "$PROJECT_DIR"; done
           test -f "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp/realsr_jni.cpp"
           test -f "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp/CMakeLists.txt"
 
