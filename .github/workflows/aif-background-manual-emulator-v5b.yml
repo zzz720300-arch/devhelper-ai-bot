@@ -112,21 +112,26 @@ jobs:
           TARGET_CODE=$?
           adb install -r "$TEST_APK" > birefnet-v2-install-test.txt 2>&1
           TEST_INSTALL_CODE=$?
+          adb shell pm list instrumentation | tee birefnet-v2-instrumentations.txt
+          INSTRUMENTATION_LINE=$(grep 'ru.quantai.imagefinisher' birefnet-v2-instrumentations.txt | head -1)
+          INSTRUMENTATION_COMPONENT=$(printf '%s\n' "$INSTRUMENTATION_LINE" | sed -E 's/^instrumentation:([^ ]+).*/\1/')
+          TARGET_PACKAGE=$(printf '%s\n' "$INSTRUMENTATION_LINE" | sed -E 's/.*\(target=([^)]*)\).*/\1/')
+          printf 'line=%s\ncomponent=%s\ntarget=%s\n' "$INSTRUMENTATION_LINE" "$INSTRUMENTATION_COMPONENT" "$TARGET_PACKAGE" > birefnet-v2-instrumentation-component.txt
           adb logcat -c
           adb shell am instrument -w -r \
             -e class 'ru.quantai.imagefinisher.app.EngineGateInstrumentedTest#b_backgroundEngineExecutesInsideAndroid' \
-            ru.quantai.imagefinisher.app.test/androidx.test.runner.AndroidJUnitRunner \
+            "$INSTRUMENTATION_COMPONENT" \
             > birefnet-v2-instrumentation.txt 2>&1
           INSTRUMENT_CODE=$?
           adb logcat -d -v threadtime > birefnet-v2-logcat.txt 2>&1 || true
           adb logcat -b crash -d -v threadtime > birefnet-v2-crash-buffer.txt 2>&1 || true
-          adb shell dumpsys activity exit-info ru.quantai.imagefinisher.app > birefnet-v2-exit-info.txt 2>&1 || true
+          adb shell dumpsys activity exit-info "$TARGET_PACKAGE" > birefnet-v2-exit-info.txt 2>&1 || true
           adb shell dumpsys dropbox --print data_app_native_crash > birefnet-v2-native-crash.txt 2>&1 || true
           adb shell dumpsys dropbox --print SYSTEM_LAST_KMSG > birefnet-v2-last-kmsg.txt 2>&1 || true
           adb shell dumpsys meminfo > birefnet-v2-all-meminfo.txt 2>&1 || true
           grep -E 'AIF_BG|AIF_ENGINE_GATE|Fatal signal|FATAL EXCEPTION|OutOfMemory|lowmemory|lmkd|onnxruntime|am_crash|am_kill|am_proc_died' birefnet-v2-logcat.txt > birefnet-v2-key-events.txt || true
           printf 'target_install=%s\ntest_install=%s\ninstrument=%s\n' "$TARGET_CODE" "$TEST_INSTALL_CODE" "$INSTRUMENT_CODE" > birefnet-v2-exit-codes.txt
-          if [ "$TARGET_CODE" -ne 0 ] || [ "$TEST_INSTALL_CODE" -ne 0 ] || ! grep -q 'OK (1 test)' birefnet-v2-instrumentation.txt; then exit 1; fi
+          if [ "$TARGET_CODE" -ne 0 ] || [ "$TEST_INSTALL_CODE" -ne 0 ] || [ -z "$INSTRUMENTATION_COMPONENT" ] || ! grep -q 'OK (1 test)' birefnet-v2-instrumentation.txt; then exit 1; fi
 
       - name: Stop emulator
         if: always()
