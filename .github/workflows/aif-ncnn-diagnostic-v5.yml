@@ -56,12 +56,12 @@ jobs:
         run: |
           set +e
           : > ncnn-build.log
-          REALSR_SRC=$(dirname "$(find vendor/realsr -path '*/RealSR-NCNN-Android-CLI/RealSR/src/main/jni/realsr.cpp' -print -quit)")
+          REALSR_SRC=$(realpath "$(dirname "$(find vendor/realsr -path '*/RealSR-NCNN-Android-CLI/RealSR/src/main/jni/realsr.cpp' -print -quit)")")
           echo "REALSR_SRC=$REALSR_SRC" | tee -a ncnn-build.log
           TOTAL=0
           for ABI in arm64-v8a x86_64; do
             echo "===== ABI $ABI =====" | tee -a ncnn-build.log
-            CFG=$(find vendor/ncnn -path "*/$ABI/lib/cmake/ncnn/ncnnConfig.cmake" -print -quit)
+            CFG=$(realpath "$(find vendor/ncnn -path "*/$ABI/lib/cmake/ncnn/ncnnConfig.cmake" -print -quit)")
             echo "NCNN_CONFIG=$CFG" | tee -a ncnn-build.log
             B="$RUNNER_TEMP/upscale-$ABI"
             cmake -S "$PROJECT_DIR/engine/upscale-ncnn/src/main/cpp" -B "$B" \
