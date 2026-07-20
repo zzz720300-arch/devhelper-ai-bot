@@ -11,6 +11,7 @@ permissions:
 env:
   PROJECT_DIR: aif-engine-gate-v5
   GRADLE_SHA256: 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+  ANDROID_AVD_HOME: ${{ github.workspace }}/.android/avd
 
 jobs:
   birefnet-manual-v2:
@@ -79,7 +80,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo chmod 666 /dev/kvm || true
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd --force --name aif_bg_v2 --package 'system-images;android-35;google_apis;x86_64' --device 'pixel_6'
+          "$ANDROID_HOME/emulator/emulator" -list-avds | tee "$GITHUB_WORKSPACE/birefnet-v2-avd-list.txt"
+          grep -qx 'aif_bg_v2' "$GITHUB_WORKSPACE/birefnet-v2-avd-list.txt"
           nohup "$ANDROID_HOME/emulator/emulator" -avd aif_bg_v2 \
             -no-window -noaudio -no-boot-anim -no-snapshot -no-metrics \
             -gpu swiftshader_indirect -accel on -memory 4096 -cores 4 -partition-size 4096 \
