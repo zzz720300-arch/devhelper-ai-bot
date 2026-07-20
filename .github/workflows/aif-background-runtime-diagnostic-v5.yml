@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           gradle -p "$PROJECT_DIR" --no-daemon --stacktrace --console=plain \
             :app:assembleDebug :app:assembleDebugAndroidTest \
-            2>&1 | tee background-build.log
+            2>&1 | tee "$GITHUB_WORKSPACE/background-build.log"
 
       - name: Enable KVM
         shell: bash
@@ -103,17 +103,19 @@ jobs:
           disable-animations: true
           script: |
             set +e
+            ROOT="$GITHUB_WORKSPACE"
             adb logcat -c
-            gradle -p aif-engine-gate-v5 --no-daemon --stacktrace --console=plain \
+            adb shell getprop > "$ROOT/background-device-props.txt" 2>&1 || true
+            gradle -p "$ROOT/aif-engine-gate-v5" --no-daemon --stacktrace --console=plain \
               "-Pandroid.testInstrumentationRunnerArguments.class=ru.quantai.imagefinisher.app.EngineGateInstrumentedTest#b_backgroundEngineExecutesInsideAndroid" \
-              :app:connectedDebugAndroidTest 2>&1 | tee background-android-test.log
+              :app:connectedDebugAndroidTest 2>&1 | tee "$ROOT/background-android-test.log"
             CODE=${PIPESTATUS[0]}
-            adb logcat -d -v threadtime > background-logcat.txt 2>&1 || true
-            adb logcat -b crash -d -v threadtime > background-crash-buffer.txt 2>&1 || true
-            adb shell dumpsys activity exit-info ru.quantai.imagefinisher.app > background-exit-info.txt 2>&1 || true
-            adb shell dumpsys dropbox --print data_app_native_crash > background-native-crash-dropbox.txt 2>&1 || true
-            adb shell dumpsys meminfo ru.quantai.imagefinisher.app > background-meminfo.txt 2>&1 || true
-            echo "$CODE" > background-test-exit.txt
+            adb logcat -d -v threadtime > "$ROOT/background-logcat.txt" 2>&1 || true
+            adb logcat -b crash -d -v threadtime > "$ROOT/background-crash-buffer.txt" 2>&1 || true
+            adb shell dumpsys activity exit-info ru.quantai.imagefinisher.app > "$ROOT/background-exit-info.txt" 2>&1 || true
+            adb shell dumpsys dropbox --print data_app_native_crash > "$ROOT/background-native-crash-dropbox.txt" 2>&1 || true
+            adb shell dumpsys meminfo ru.quantai.imagefinisher.app > "$ROOT/background-meminfo.txt" 2>&1 || true
+            echo "$CODE" > "$ROOT/background-test-exit.txt"
             exit "$CODE"
 
       - name: Upload complete background runtime evidence
@@ -122,16 +124,17 @@ jobs:
         with:
           name: AI_IMAGE_FINISHER_V5_BACKGROUND_RUNTIME_DIAGNOSTIC
           path: |
-            background-build.log
-            background-assets.sha256
-            background-android-test.log
-            background-logcat.txt
-            background-crash-buffer.txt
-            background-exit-info.txt
-            background-native-crash-dropbox.txt
-            background-meminfo.txt
-            background-test-exit.txt
-            aif-engine-gate-v5/app/build/reports/androidTests/connected/**
-            aif-engine-gate-v5/app/build/outputs/androidTest-results/**
+            ${{ github.workspace }}/background-build.log
+            ${{ github.workspace }}/background-assets.sha256
+            ${{ github.workspace }}/background-device-props.txt
+            ${{ github.workspace }}/background-android-test.log
+            ${{ github.workspace }}/background-logcat.txt
+            ${{ github.workspace }}/background-crash-buffer.txt
+            ${{ github.workspace }}/background-exit-info.txt
+            ${{ github.workspace }}/background-native-crash-dropbox.txt
+            ${{ github.workspace }}/background-meminfo.txt
+            ${{ github.workspace }}/background-test-exit.txt
+            ${{ github.workspace }}/aif-engine-gate-v5/app/build/reports/androidTests/connected/**
+            ${{ github.workspace }}/aif-engine-gate-v5/app/build/outputs/androidTest-results/**
           if-no-files-found: warn
           retention-days: 7
