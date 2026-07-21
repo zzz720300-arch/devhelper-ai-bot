@@ -1,0 +1,73 @@
+name: Compile PDF Office Engine V1
+
+on:
+  push:
+    branches:
+      - pdf-office-engine-v0.2.0-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: PDF_OFFICE_ENGINE_v1.0.0
+  SOURCE_SHA256: 9331d8b50350cb7573d8f58b3314f36bf4854fb158bb1754109fd998ba99c0c7
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
+
+jobs:
+  compile-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > ci-source.tar.gz
+          test "$(sha256sum ci-source.tar.gz | awk '{print $1}')" = "$SOURCE_SHA256"
+          tar -xzf ci-source.tar.gz
+          mv PDF_OFFICE_ENGINE_v1.0.0_CI_TREE "$PROJECT_DIR"
+          cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          cd "$PROJECT_DIR"
+          gradle wrapper --gradle-version 8.13
+          chmod +x gradlew
+      - name: Compile all Kotlin sources
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon --console=plain \
+            :pdf-contract:compileDebugKotlin \
+            :pdf-engine-pdfbox:compileDebugKotlin \
+            :pdf-render:compileDebugKotlin \
+            :demo-app:compileDebugKotlin \
+            :integration-test-host:compileDebugKotlin \
+            > compile.log 2>&1
+          status=$?
+          set -e
+          grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Could not resolve|Could not compile|Unresolved reference|Compilation error)' compile.log | tail -n 300 || true
+          tail -n 300 compile.log || true
+          exit "$status"
+      - name: Upload compile log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_COMPILE_LOG
+          path: ${{ env.PROJECT_DIR }}/compile.log
+          if-no-files-found: warn
+          retention-days: 30
