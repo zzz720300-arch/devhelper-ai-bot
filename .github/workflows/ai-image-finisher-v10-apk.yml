@@ -24,8 +24,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p aif-source
-          cat ci/ai-image-finisher/source.b64.part.* | base64 --decode > /tmp/aif-source.tar.xz
-          echo "d492713c43363bf66721939f2c7a9f4c488095726bd63a6c2aa726d77f99caf8  /tmp/aif-source.tar.xz" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import glob
+          import hashlib
+
+          paths = sorted(glob.glob("ci/ai-image-finisher/source.b64.part.*"))
+          assert len(paths) == 12, f"Expected 12 source chunks, got {len(paths)}"
+          encoded = "".join(Path(path).read_text(encoding="ascii") for path in paths)
+          encoded = "".join(encoded.split())
+          raw = base64.b64decode(encoded, validate=True)
+          digest = hashlib.sha256(raw).hexdigest()
+          expected = "d492713c43363bf66721939f2c7a9f4c488095726bd63a6c2aa726d77f99caf8"
+          assert digest == expected, f"Source archive SHA mismatch: {digest}"
+          Path("/tmp/aif-source.tar.xz").write_bytes(raw)
+          print(f"SOURCE_CHUNKS={len(paths)}")
+          print(f"SOURCE_ARCHIVE_BYTES={len(raw)}")
+          print(f"SOURCE_ARCHIVE_SHA256={digest}")
+          PY
+          xz --test /tmp/aif-source.tar.xz
           tar -xJf /tmp/aif-source.tar.xz -C aif-source
           test -f aif-source/settings.gradle.kts
           test -f aif-source/instrumentation-test-app/app/src/main/java/ru/quantai/imagefinisher/test/MainActivity.kt
