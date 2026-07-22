@@ -1,0 +1,108 @@
+name: TextIllustrator diagnostic compile
+
+on:
+  push:
+    branches: [ textillustrator-1.0.4-build2 ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            payload2/source.000.txt \
+            payload2/source.001.0.txt \
+            payload2/source.001.1.txt \
+            payload2/source.001.2.txt \
+            payload2/source.001.3.txt \
+            payload2/source.001.4.0.txt \
+            payload2/source.001.4.1.txt \
+            payload2/source.001.4.2.txt \
+            payload2/source.001.4.3.txt \
+            payload2/source.001.4.4.txt \
+            payload2/source.002.txt \
+            payload2/source.003.txt \
+            payload2/source.004.txt \
+            payload2/source.005.txt \
+            payload2/source.006.txt \
+            payload2/source.007.txt > source.b64
+          echo "4406414b0218c560dd743ed154f36b5ab84002302e9db014515db4c35025bbee  source.b64" | sha256sum -c -
+          base64 -d source.b64 > textillustrator-source.tar.gz
+          mkdir -p textillustrator
+          tar -xzf textillustrator-source.tar.gz -C textillustrator
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt')
+          s = p.read_text()
+          s = s.replace('import androidx.activity.compose.BackHandler\n', 'import androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent\n')
+          s = s.replace('@Composable fun TextIllustratorTheme(content:@Composable()->Unit)', '@Composable fun TextIllustratorTheme(content: @Composable () -> Unit)')
+          s = s.replace('BackHandler(enabled=s.screen!=Screen.Home||s.draft.isNotBlank())', 'BackHandler(enabled=s.screen!=Screen.Home)')
+          s = s.replace('Screen.Home->if(s.draft.isNotBlank())vm.message("Очистите текст или нажмите системную кнопку ещё раз после сохранения")', 'Screen.Home->Unit')
+          s = s.replace('AssistChip(onClick={},label={Text("${p.pageCount} стр.")})', 'Surface(shape=RoundedCornerShape(50.dp),color=Pale){Text("${p.pageCount} стр.",modifier=Modifier.padding(horizontal=12.dp,vertical=6.dp),fontSize=12.sp)}')
+          p.write_text(s)
+          m = Path('textillustrator/app/src/main/AndroidManifest.xml')
+          x = m.read_text()
+          x = x.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools">')
+          x = x.replace('        <provider\n            android:name="androidx.core.content.FileProvider"', '        <provider\n            android:name="androidx.startup.InitializationProvider"\n            android:authorities="${applicationId}.androidx-startup"\n            android:exported="false"\n            tools:node="merge">\n            <meta-data\n                android:name="androidx.work.WorkManagerInitializer"\n                tools:node="remove" />\n        </provider>\n\n        <provider\n            android:name="androidx.core.content.FileProvider"')
+          m.write_text(x)
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Compile and test with full diagnostics
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon test --stacktrace --info 2>&1 | tee diagnostic.log
+          echo ${PIPESTATUS[0]} > diagnostic.exitcode
+
+      - name: Android Lint with full diagnostics
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon lint --stacktrace --info 2>&1 | tee lint-diagnostic.log
+          echo ${PIPESTATUS[0]} > lint-diagnostic.exitcode
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextIllustrator-diagnostic-log
+          path: |
+            diagnostic.log
+            diagnostic.exitcode
+            lint-diagnostic.log
+            lint-diagnostic.exitcode
+            textillustrator/app/build/reports/lint-results-debug.html
+            textillustrator/app/build/reports/lint-results-debug.txt
+          if-no-files-found: warn
+          retention-days: 7

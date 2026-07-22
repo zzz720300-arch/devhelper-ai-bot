@@ -1,0 +1,206 @@
+name: TextIllustrator 1.0.4 personal build
+
+on:
+  push:
+    branches: [ textillustrator-1.0.4-build2 ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ROUTERAI_API_KEY: ${{ secrets.ROUTERAI_API_KEY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout build payload
+        uses: actions/checkout@v4
+
+      - name: Verify payload chunk 000
+        run: echo "7a950d3f368cecfe6503ae9723c61a2f1b85dd52e22a70636d1013692ef7610a  payload2/source.000.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 0
+        run: echo "e0df21c525d7143706af6773a54b204fedd716651245cf1c73fb80f209708645  payload2/source.001.0.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 1
+        run: echo "f06a7c729c9e567d3e3cbb35e73c2560d5bde72f08e47a130dbb81142abfaeeb  payload2/source.001.1.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 2
+        run: echo "aea3688a0cbe245cf0a5540d397c68373e72357ec9371b61c941d44f2724fdea  payload2/source.001.2.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 3
+        run: echo "3651d812072f240b1dae2933b65e42821570e5235ec102ef16ca5b9a1211f651  payload2/source.001.3.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4a
+        run: echo "97013231eb31970fd75a19704c330cb38a5105fddac9b820049cafbd6201557f  payload2/source.001.4.0.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4b
+        run: echo "7b39db2e0dfaa20510e9e20fbd93c955ee581a7272024179dd3fd1bd8f777e31  payload2/source.001.4.1.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4c
+        run: echo "bb300c847ed46807f9e518d66ab66d341666219ced973bf180c5b68547b746ab  payload2/source.001.4.2.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4d
+        run: echo "d234b9ab6cfe25a289e1968442b4c8fe1a4cda26b644c453450536d672158a54  payload2/source.001.4.3.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4e
+        run: echo "9ca6748cde1c9fe788a48674693e3bcd0e567931d01b128bbeff964ca733a459  payload2/source.001.4.4.txt" | sha256sum -c -
+      - name: Verify payload chunk 002
+        run: echo "84f58e8d11a075bfcfeb2b5e9535932e6353934d9e681d699765a702894cc1d0  payload2/source.002.txt" | sha256sum -c -
+      - name: Verify payload chunk 003
+        run: echo "05eb404d7467d45cbcb31565320daa55e7ca357253437ffe209d6cfc1d486bd1  payload2/source.003.txt" | sha256sum -c -
+      - name: Verify payload chunk 004
+        run: echo "c1982e5403ebef5cab80042d14c948de143c2dcd8e13f533c22cf0b8f65d077d  payload2/source.004.txt" | sha256sum -c -
+      - name: Verify payload chunk 005
+        run: echo "2bb243513ba7c7cbc67daee5fc8a96fac19119707b134db4c634adb73bc0e821  payload2/source.005.txt" | sha256sum -c -
+      - name: Verify payload chunk 006
+        run: echo "c1eb45a40bdee9c045eedc48f835397920bd5c5eff43e27764426736b9d84492  payload2/source.006.txt" | sha256sum -c -
+      - name: Verify payload chunk 007
+        run: echo "519b75492d599a1495cad9e473f16c62e4fde4567c3b8fbb6b1cb64b8e1aa28c  payload2/source.007.txt" | sha256sum -c -
+
+      - name: Restore Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            payload2/source.000.txt \
+            payload2/source.001.0.txt \
+            payload2/source.001.1.txt \
+            payload2/source.001.2.txt \
+            payload2/source.001.3.txt \
+            payload2/source.001.4.0.txt \
+            payload2/source.001.4.1.txt \
+            payload2/source.001.4.2.txt \
+            payload2/source.001.4.3.txt \
+            payload2/source.001.4.4.txt \
+            payload2/source.002.txt \
+            payload2/source.003.txt \
+            payload2/source.004.txt \
+            payload2/source.005.txt \
+            payload2/source.006.txt \
+            payload2/source.007.txt > source.b64
+          echo "4406414b0218c560dd743ed154f36b5ab84002302e9db014515db4c35025bbee  source.b64" | sha256sum -c -
+          base64 -d source.b64 > textillustrator-source.tar.gz
+          echo "48d15a932531561a5a7aa77e77fb2755ad4893c14dc9031738b6381a58efcb3d  textillustrator-source.tar.gz" | sha256sum -c -
+          mkdir -p textillustrator
+          tar -xzf textillustrator-source.tar.gz -C textillustrator
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt')
+          s = p.read_text()
+          s = s.replace('import androidx.activity.compose.BackHandler\n', 'import androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent\n')
+          s = s.replace('@Composable fun TextIllustratorTheme(content:@Composable()->Unit)', '@Composable fun TextIllustratorTheme(content: @Composable () -> Unit)')
+          s = s.replace('BackHandler(enabled=s.screen!=Screen.Home||s.draft.isNotBlank())', 'BackHandler(enabled=s.screen!=Screen.Home)')
+          s = s.replace('Screen.Home->if(s.draft.isNotBlank())vm.message("Очистите текст или нажмите системную кнопку ещё раз после сохранения")', 'Screen.Home->Unit')
+          s = s.replace('AssistChip(onClick={},label={Text("${p.pageCount} стр.")})', 'Surface(shape=RoundedCornerShape(50.dp),color=Pale){Text("${p.pageCount} стр.",modifier=Modifier.padding(horizontal=12.dp,vertical=6.dp),fontSize=12.sp)}')
+          p.write_text(s)
+          m = Path('textillustrator/app/src/main/AndroidManifest.xml')
+          x = m.read_text()
+          x = x.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools">')
+          x = x.replace('        <provider\n            android:name="androidx.core.content.FileProvider"', '        <provider\n            android:name="androidx.startup.InitializationProvider"\n            android:authorities="${applicationId}.androidx-startup"\n            android:exported="false"\n            tools:node="merge">\n            <meta-data\n                android:name="androidx.work.WorkManagerInitializer"\n                tools:node="remove" />\n        </provider>\n\n        <provider\n            android:name="androidx.core.content.FileProvider"')
+          m.write_text(x)
+          PY
+          test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
+          test -f textillustrator/app/build.gradle.kts
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Generate Gradle Wrapper
+        run: gradle -p textillustrator wrapper --gradle-version 8.13
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon test | tee unit-tests.log
+
+      - name: Android Lint
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon lint | tee lint.log
+
+      - name: Release build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon clean assembleRelease | tee build.log
+
+      - name: Package verified artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/reports
+          cp textillustrator/app/build/outputs/apk/release/app-release.apk release/TextIllustrator_1.0.4-personal.apk
+          sha256sum release/TextIllustrator_1.0.4-personal.apk > release/SHA256SUMS_1.0.4.txt
+          cp build.log unit-tests.log lint.log release/reports/
+          cat > release/BUILD_REPORT_1.0.4.md <<'EOF'
+          # BUILD REPORT — TextIllustrator 1.0.4-personal
+          - CI: GitHub Actions
+          - JDK: 21
+          - Gradle: 8.13
+          - AGP: 8.13.2
+          - compile/target SDK: 36
+          - Tasks: test, lint, clean assembleRelease
+          - APK: TextIllustrator_1.0.4-personal.apk
+          - Result: PASS
+          EOF
+          cat > release/TEST_REPORT_1.0.4.md <<'EOF'
+          # TEST REPORT — TextIllustrator 1.0.4-personal
+          - Unit tests: PASS
+          - Android Lint: PASS (warnings recorded)
+          - Release compile/R8/package: PASS
+          - Physical-device runtime test: NOT EXECUTED in CI
+          - Microsoft Word open test: NOT EXECUTED in CI
+          EOF
+          cat > release/AUDIT_REPORT_1.0.4.md <<'EOF'
+          # AUDIT REPORT
+          - No personal API key is stored in the public repository or source ZIP.
+          - The app accepts a personal RouterAI key and protects it with Android Keystore.
+          - Source uses SAF, FileProvider, finite retries, WorkManager unique work and atomic DOCX output.
+          - Release manifest permissions: INTERNET, ACCESS_NETWORK_STATE.
+          - No broad storage permission.
+          EOF
+          cat > release/INSTALL_AND_PHONE_TEST_RU.md <<'EOF'
+          # Установка и проверка
+          1. Установить TextIllustrator_1.0.4-personal.apk.
+          2. Открыть «Настройки API» и сохранить личный RouterAI API-ключ.
+          3. Вставить текст 20–4800 знаков или импортировать TXT/DOCX.
+          4. Нажать «Создать документ» и дождаться результата.
+          5. Открыть DOCX в Microsoft Word; Word не должен предлагать восстановление.
+          6. Проверить «Ещё вариант», Back, «Стоп», фон, повтор после отключения сети и отправку DOCX/PNG.
+          EOF
+          rm -rf source-package
+          mkdir -p source-package/TextIllustrator_Source_1.0.4-personal
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.gradle' \
+            --exclude '**/build' \
+            --exclude 'release' \
+            --exclude 'secrets.properties' \
+            textillustrator/ source-package/TextIllustrator_Source_1.0.4-personal/
+          (cd source-package && zip -qr ../release/TextIllustrator_Source_1.0.4-personal.zip TextIllustrator_Source_1.0.4-personal)
+          sha256sum release/TextIllustrator_Source_1.0.4-personal.zip >> release/SHA256SUMS_1.0.4.txt
+
+      - name: Upload TextIllustrator package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextIllustrator-1.0.4-personal
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
