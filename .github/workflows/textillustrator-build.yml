@@ -3,6 +3,8 @@ name: TextIllustrator 1.0.4 personal build
 on:
   push:
     branches: [ textillustrator-1.0.4 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
