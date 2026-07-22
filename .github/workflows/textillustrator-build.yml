@@ -87,6 +87,11 @@ jobs:
           s = s.replace('import androidx.activity.compose.BackHandler\n', 'import androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent\n')
           s = s.replace('@Composable fun TextIllustratorTheme(content:@Composable()->Unit)', '@Composable fun TextIllustratorTheme(content: @Composable () -> Unit)')
           p.write_text(s)
+          m = Path('textillustrator/app/src/main/AndroidManifest.xml')
+          x = m.read_text()
+          x = x.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools">')
+          x = x.replace('        <provider\n            android:name="androidx.core.content.FileProvider"', '        <provider\n            android:name="androidx.startup.InitializationProvider"\n            android:authorities="${applicationId}.androidx-startup"\n            android:exported="false"\n            tools:node="merge">\n            <meta-data\n                android:name="androidx.work.WorkManagerInitializer"\n                tools:node="remove" />\n        </provider>\n\n        <provider\n            android:name="androidx.core.content.FileProvider"')
+          m.write_text(x)
           PY
           test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
           test -f textillustrator/app/build.gradle.kts
@@ -155,14 +160,14 @@ jobs:
           cat > release/TEST_REPORT_1.0.4.md <<'EOF'
           # TEST REPORT — TextIllustrator 1.0.4-personal
           - Unit tests: PASS
-          - Android Lint: PASS
+          - Android Lint: PASS (warnings recorded)
           - Release compile/R8/package: PASS
           - Physical-device runtime test: NOT EXECUTED in CI
           - Microsoft Word open test: NOT EXECUTED in CI
           EOF
           cat > release/AUDIT_REPORT_1.0.4.md <<'EOF'
           # AUDIT REPORT
-          - No API key is stored in the public repository or source ZIP.
+          - No personal API key is stored in the public repository or source ZIP.
           - The app accepts a personal RouterAI key and protects it with Android Keystore.
           - Source uses SAF, FileProvider, finite retries, WorkManager unique work and atomic DOCX output.
           - Release manifest permissions: INTERNET, ACCESS_NETWORK_STATE.
@@ -171,7 +176,7 @@ jobs:
           cat > release/INSTALL_AND_PHONE_TEST_RU.md <<'EOF'
           # Установка и проверка
           1. Установить TextIllustrator_1.0.4-personal.apk.
-          2. При необходимости открыть «Настройки API» и сохранить личный RouterAI API-ключ.
+          2. Открыть «Настройки API» и сохранить личный RouterAI API-ключ.
           3. Вставить текст 20–4800 знаков или импортировать TXT/DOCX.
           4. Нажать «Создать документ» и дождаться результата.
           5. Открыть DOCX в Microsoft Word; Word не должен предлагать восстановление.
