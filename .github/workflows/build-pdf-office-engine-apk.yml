@@ -1,4 +1,4 @@
-name: Build PDF Office Engine APK
+name: Build PDF Office Engine 1.1 APK
 
 on:
   push:
@@ -13,14 +13,15 @@ permissions:
   contents: read
 
 env:
-  PROJECT_DIR: PDF_OFFICE_ENGINE_v1.0.0
+  PROJECT_DIR: PDF_OFFICE_ENGINE_v1.1.0
   SOURCE_SHA256: 9331d8b50350cb7573d8f58b3314f36bf4854fb158bb1754109fd998ba99c0c7
+  PATCH_SHA256: 3796710c43fa43cbcaa5cdb06fb30eb61444f147882c30174b2e45ba85dae74a
   GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +36,12 @@ jobs:
           cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
           cd "$PROJECT_DIR"
           python3 apply_source_fixes.py
+          cd ..
+          cat payload/pdf-office-engine-v1-1/patch.part.* | base64 -d > version-1.1-patch.tar.gz
+          test "$(sha256sum version-1.1-patch.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
+          tar -xzf version-1.1-patch.tar.gz -C "$PROJECT_DIR"
+          test -f "$PROJECT_DIR/demo-app/src/main/java/ru/pdfoffice/demo/AppLogger.kt"
+          grep -q 'versionName = "1.1.0"' "$PROJECT_DIR/demo-app/build.gradle.kts"
 
       - uses: actions/setup-java@v4
         with:
@@ -70,7 +77,7 @@ jobs:
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=PDF Office Engine, OU=CI, O=PDF Office, L=Tallinn, C=EE"
+            -dname "CN=PDF Office Engine 1.1, OU=CI, O=PDF Office, L=Tallinn, C=EE"
           printf '%s\n' \
             'storeFile=ci-release.keystore' \
             'storePassword=android' \
@@ -90,6 +97,10 @@ jobs:
             :pdf-contract:lintDebug \
             :pdf-engine-pdfbox:lintDebug \
             :pdf-render:lintDebug \
+            :demo-app:lintDebug \
+            :pdf-contract:assembleRelease \
+            :pdf-engine-pdfbox:assembleRelease \
+            :pdf-render:assembleRelease \
             :demo-app:assembleDebug \
             :demo-app:assembleRelease \
             :integration-test-host:assembleDebug \
@@ -97,18 +108,18 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Could not resolve|Could not compile|Unresolved reference|Compilation error)' build-apk.log | tail -n 300 || true
-            tail -n 350 build-apk.log || true
+            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Could not resolve|Could not compile|Unresolved reference|Compilation error)' build-apk.log | tail -n 400 || true
+            tail -n 450 build-apk.log || true
             exit "$status"
           fi
-          tail -n 150 build-apk.log
+          tail -n 180 build-apk.log
 
-      - name: Verify and package APK
+      - name: Verify and package APK and source ZIP
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p delivery
+          mkdir -p delivery/sdk
           DEBUG_APK="demo-app/build/outputs/apk/debug/demo-app-debug.apk"
           RELEASE_APK="demo-app/build/outputs/apk/release/demo-app-release.apk"
           HOST_APK="integration-test-host/build/outputs/apk/debug/integration-test-host-debug.apk"
@@ -117,17 +128,44 @@ jobs:
           test -s "$HOST_APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$RELEASE_APK" > delivery/APK_SIGNATURE_REPORT.txt
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -v 4 "$RELEASE_APK" > delivery/APK_ZIPALIGN_REPORT.txt
-          cp "$RELEASE_APK" delivery/PDF_OFFICE_ENGINE_v1.0.0_RELEASE.apk
-          cp "$DEBUG_APK" delivery/PDF_OFFICE_ENGINE_v1.0.0_DEBUG.apk
+          cp "$RELEASE_APK" delivery/PDF_OFFICE_ENGINE_v1.1.0_RELEASE.apk
+          cp "$DEBUG_APK" delivery/PDF_OFFICE_ENGINE_v1.1.0_DEBUG.apk
           cp "$HOST_APK" delivery/PDF_OFFICE_ENGINE_INTEGRATION_HOST_DEBUG.apk
+          cp pdf-contract/build/outputs/aar/pdf-contract-release.aar delivery/sdk/
+          cp pdf-engine-pdfbox/build/outputs/aar/pdf-engine-pdfbox-release.aar delivery/sdk/
+          cp pdf-render/build/outputs/aar/pdf-render-release.aar delivery/sdk/
           cp build-apk.log delivery/
-          find delivery -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > delivery/SHA256SUMS.txt
-          find delivery -type f -printf '%f\t%s bytes\n' | sort > delivery/ARTIFACTS.txt
 
-      - name: Upload APK delivery
+          mkdir -p ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE
+          rsync -a \
+            --exclude '.gradle/' \
+            --exclude '**/build/' \
+            --exclude 'delivery/' \
+            --exclude 'ci-release.keystore' \
+            --exclude 'keystore.properties' \
+            --exclude 'local.properties' \
+            ./ ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/
+          cat > ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/README_BUILD_RU.md <<'EOF'
+          # PDF Office Engine 1.1.0
+
+          Сборка Windows:
+          1. Установить JDK 17 и Android SDK 36.
+          2. Создать local.properties с sdk.dir.
+          3. Для debug: gradlew.bat clean :demo-app:assembleDebug.
+          4. Для release: создать keystore.properties по примеру и выполнить gradlew.bat clean :demo-app:assembleRelease.
+
+          APK: demo-app/build/outputs/apk/.
+          AAR: pdf-contract, pdf-engine-pdfbox и pdf-render в build/outputs/aar/.
+          EOF
+          (cd ../source-export && zip -qr ../"$PROJECT_DIR"/delivery/PDF_OFFICE_ENGINE_v1.1.0_SOURCE.zip PDF_OFFICE_ENGINE_v1.1.0_SOURCE)
+
+          find delivery -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > delivery/SHA256SUMS.txt
+          find delivery -type f -printf '%P\t%s bytes\n' | sort > delivery/ARTIFACTS.txt
+
+      - name: Upload APK and source delivery
         uses: actions/upload-artifact@v4
         with:
-          name: PDF_OFFICE_ENGINE_V1_APK
+          name: PDF_OFFICE_ENGINE_V1_1_DELIVERY
           path: ${{ env.PROJECT_DIR }}/delivery
           if-no-files-found: error
           retention-days: 30
@@ -136,7 +174,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: PDF_OFFICE_ENGINE_V1_APK_FAILURE_LOG
+          name: PDF_OFFICE_ENGINE_V1_1_FAILURE_LOG
           path: ${{ env.PROJECT_DIR }}/build-apk.log
           if-no-files-found: warn
           retention-days: 30
@@ -144,7 +182,7 @@ jobs:
   emulator-tests:
     needs: build-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
 
@@ -159,6 +197,10 @@ jobs:
           cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
           cd "$PROJECT_DIR"
           python3 apply_source_fixes.py
+          cd ..
+          cat payload/pdf-office-engine-v1-1/patch.part.* | base64 -d > version-1.1-patch.tar.gz
+          test "$(sha256sum version-1.1-patch.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
+          tar -xzf version-1.1-patch.tar.gz -C "$PROJECT_DIR"
 
       - uses: actions/setup-java@v4
         with:
@@ -181,7 +223,7 @@ jobs:
           gradle wrapper --gradle-version 8.13
           chmod +x gradlew
 
-      - name: Run PDF engine tests on Android emulator
+      - name: Run PDF engine and UI tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -197,11 +239,12 @@ jobs:
             ./gradlew --no-daemon --console=plain \
               :pdf-engine-pdfbox:connectedDebugAndroidTest \
               :integration-test-host:connectedDebugAndroidTest \
+              :demo-app:connectedDebugAndroidTest \
               > emulator-tests.log 2>&1
             status=$?
             set -e
-            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|FAILED)' emulator-tests.log | tail -n 300 || true
-            tail -n 300 emulator-tests.log || true
+            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|FAILED)' emulator-tests.log | tail -n 400 || true
+            tail -n 400 emulator-tests.log || true
             exit "$status"
 
       - name: Collect emulator evidence
@@ -218,7 +261,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PDF_OFFICE_ENGINE_V1_EMULATOR_EVIDENCE
+          name: PDF_OFFICE_ENGINE_V1_1_EMULATOR_EVIDENCE
           path: ${{ env.PROJECT_DIR }}/emulator-evidence
           if-no-files-found: warn
           retention-days: 30
