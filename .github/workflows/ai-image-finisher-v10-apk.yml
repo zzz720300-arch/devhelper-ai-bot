@@ -1,0 +1,168 @@
+name: AI Image Finisher V10.0.2 APK
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci/ai-image-finisher-final6/**"
+      - "ci/ai-image-finisher-tail12/**"
+      - "ci/ai-image-finisher-repair6/**"
+      - ".github/workflows/ai-image-finisher-v10-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout CI payload
+        uses: actions/checkout@v4
+
+      - name: Decode and verify source payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import hashlib
+
+          paths = [
+              "ci/ai-image-finisher-final6/source.final6.part.000",
+              "ci/ai-image-finisher-final6/source.final6.part.001",
+              "ci/ai-image-finisher-final6/source.final6.part.002",
+              "ci/ai-image-finisher-final6/source.final6.part.003",
+              "ci/ai-image-finisher-final6/source.final6.part.004",
+              "ci/ai-image-finisher-tail12/source.tail12.part.000",
+              "ci/ai-image-finisher-tail12/source.tail12.part.001",
+              "ci/ai-image-finisher-tail12/source.tail12.part.002",
+              "ci/ai-image-finisher-tail12/source.tail12.part.003",
+              "ci/ai-image-finisher-repair6/source.final6.part.013",
+              "ci/ai-image-finisher-repair6/source.final6.part.014",
+              "ci/ai-image-finisher-tail12/source.tail12.part.005",
+              "ci/ai-image-finisher-repair6/source.final6.part.017",
+              "ci/ai-image-finisher-repair6/source.final6.part.018",
+          ]
+          for path in paths:
+              if not Path(path).is_file():
+                  raise SystemExit(f"Missing source chunk: {path}")
+          encoded = "".join(Path(path).read_text(encoding="ascii") for path in paths)
+          encoded = "".join(encoded.split())
+          raw = base64.b64decode(encoded, validate=True)
+          digest = hashlib.sha256(raw).hexdigest()
+          expected = "4d08ffd881b189c64d995f24ae6e46afc469c78426d66e0edf5245d55cb8f697"
+          print(f"SOURCE_ARCHIVE_BYTES={len(raw)}")
+          print(f"SOURCE_ARCHIVE_SHA256={digest}")
+          if digest != expected:
+              raise SystemExit(f"Source SHA mismatch: {digest} != {expected}")
+          Path("/tmp/aif-source.tar.xz").write_bytes(raw)
+          PY
+          xz --test /tmp/aif-source.tar.xz
+          echo "SOURCE_ARCHIVE_VERIFY=PASS"
+
+      - name: Extract and verify source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p aif-source
+          tar -xJf /tmp/aif-source.tar.xz -C aif-source
+          test -f aif-source/settings.gradle.kts
+          test -f aif-source/gradlew
+          test -f aif-source/instrumentation-test-app/app/src/main/java/ru/quantai/imagefinisher/test/MainActivity.kt
+          grep -q 'android.intent.category.LAUNCHER' aif-source/instrumentation-test-app/app/src/main/AndroidManifest.xml
+          grep -q 'versionName = "10.0.2"' aif-source/instrumentation-test-app/app/build.gradle.kts
+          echo "SOURCE_TREE_RESTORE=PASS"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Download pinned internal test models
+        working-directory: aif-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL_DIR=imagefinisher-sdk/src/main/assets/models
+          mkdir -p "$MODEL_DIR"
+          curl -fL --retry 5 --retry-delay 2 \
+            "https://huggingface.co/chwshuang/Stable_diffusion_remove_background_model/resolve/06d038aa68503bfc2ba4d4ce4a81ef8b768995b9/u2netp.onnx" \
+            -o "$MODEL_DIR/u2netp.onnx"
+          curl -fL --retry 5 --retry-delay 2 \
+            "https://huggingface.co/microsoft/dml-ai-hub-models/resolve/609ae4cdeb2b6a054b619cc72dc764774746bebc/real_esrgan_general_x4v3/real_esrgan_general_x4v3.onnx" \
+            -o "$MODEL_DIR/real-esrgan-general-x4v3.onnx"
+          echo "16fb536473a41b2e101bd3a6ff788f599b95e32ecbe20624c552b3d8ba91a11a  $MODEL_DIR/u2netp.onnx" | sha256sum -c -
+          echo "a7af4e385afb59470d4f01e80d2cce33d899f1b205c1a96e4ce6e47eaa054781  $MODEL_DIR/real-esrgan-general-x4v3.onnx" | sha256sum -c -
+
+      - name: Run unit tests, lint and Android build
+        working-directory: aif-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          set +e
+          ./gradlew --no-daemon --stacktrace \
+            -PimageFinisher.internalModelBundle=true \
+            -PimageFinisher.allowModifiedSource=true \
+            :imagefinisher-sdk:testDebugUnitTest \
+            :imagefinisher-office:testDebugUnitTest \
+            :test-app:lintDebug \
+            :test-app:assembleDebug \
+            :test-app:assembleDebugAndroidTest \
+            :imagefinisher-sdk:assembleRelease \
+            :imagefinisher-office:assembleRelease 2>&1 | tee /tmp/aif-gradle.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "=== GRADLE_FAILURE_TAIL ==="
+            tail -n 250 /tmp/aif-gradle.log
+            exit "$RC"
+          fi
+
+      - name: Verify launcher, signature and embedded models
+        working-directory: aif-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find instrumentation-test-app/app/build/outputs/apk/debug -name '*.apk' -type f | head -1)
+          TEST_APK=$(find instrumentation-test-app/app/build/outputs/apk/androidTest/debug -name '*.apk' -type f | head -1)
+          test -n "$APK" && test -f "$APK"
+          test -n "$TEST_APK" && test -f "$TEST_APK"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$AAPT" dump badging "$APK" | tee /tmp/aif-badging.txt
+          grep -q "package: name='ru.quantai.imagefinisher.test'" /tmp/aif-badging.txt
+          grep -q "versionName='10.0.2'" /tmp/aif-badging.txt
+          grep -q "launchable-activity: name='ru.quantai.imagefinisher.test.MainActivity'" /tmp/aif-badging.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/aif-signature.txt
+          unzip -l "$APK" | tee /tmp/aif-apk-contents.txt
+          grep -q 'assets/models/u2netp.onnx' /tmp/aif-apk-contents.txt
+          grep -q 'assets/models/real-esrgan-general-x4v3.onnx' /tmp/aif-apk-contents.txt
+          mkdir -p dist
+          cp "$APK" dist/AI_IMAGE_FINISHER_V10_0_2_WORKING_DEBUG.apk
+          cp "$TEST_APK" dist/AI_IMAGE_FINISHER_V10_0_2_ANDROID_TEST.apk
+          cp imagefinisher-sdk/build/outputs/aar/imagefinisher-sdk-release.aar dist/imagefinisher-sdk-10.0.2-internal.aar
+          cp imagefinisher-office/build/outputs/aar/imagefinisher-office-release.aar dist/imagefinisher-office-10.0.2.aar
+          cp /tmp/aif-badging.txt /tmp/aif-signature.txt /tmp/aif-apk-contents.txt dist/
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+
+      - name: Upload verified APK delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_IMAGE_FINISHER_V10_0_2_APK
+          path: aif-source/dist
+          retention-days: 1

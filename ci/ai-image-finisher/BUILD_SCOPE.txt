@@ -1,0 +1,1 @@
+Build scope: runnable debug APK, debug AndroidTest APK, SDK AAR, Office AAR, lint, unit tests, launcher verification, APK signature verification, embedded model verification.
