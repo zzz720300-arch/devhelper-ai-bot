@@ -76,7 +76,15 @@ jobs:
           gradle -p textillustrator --no-daemon test --stacktrace --info 2>&1 | tee diagnostic.log
           echo ${PIPESTATUS[0]} > diagnostic.exitcode
 
-      - name: Upload diagnostic log
+      - name: Android Lint with full diagnostics
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon lint --stacktrace --info 2>&1 | tee lint-diagnostic.log
+          echo ${PIPESTATUS[0]} > lint-diagnostic.exitcode
+
+      - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -84,5 +92,9 @@ jobs:
           path: |
             diagnostic.log
             diagnostic.exitcode
-          if-no-files-found: error
+            lint-diagnostic.log
+            lint-diagnostic.exitcode
+            textillustrator/app/build/reports/lint-results-debug.html
+            textillustrator/app/build/reports/lint-results-debug.txt
+          if-no-files-found: warn
           retention-days: 7
