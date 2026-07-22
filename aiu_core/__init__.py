@@ -1,2 +1,0 @@
-"""AIU Core package."""
-
