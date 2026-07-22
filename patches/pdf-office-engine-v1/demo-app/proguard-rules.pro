@@ -1,0 +1,5 @@
+-keep class ru.pdfoffice.contract.** { *; }
+-keep class ru.pdfoffice.engine.pdfbox.** { *; }
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn com.gemalto.jp2.**
