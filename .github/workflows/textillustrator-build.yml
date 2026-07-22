@@ -21,11 +21,31 @@ jobs:
       - name: Checkout build payload
         uses: actions/checkout@v4
 
+      - name: Verify payload chunk 000
+        run: echo "7a950d3f368cecfe6503ae9723c61a2f1b85dd52e22a70636d1013692ef7610a  payload2/source.000.txt" | sha256sum -c -
+      - name: Verify payload chunk 001
+        run: echo "4b42976114da86c1a2cbe784ece52516ca9c0064740610fe7b9e29761865c7cf  payload2/source.001.txt" | sha256sum -c -
+      - name: Verify payload chunk 002
+        run: echo "84f58e8d11a075bfcfeb2b5e9535932e6353934d9e681d699765a702894cc1d0  payload2/source.002.txt" | sha256sum -c -
+      - name: Verify payload chunk 003
+        run: echo "05eb404d7467d45cbcb31565320daa55e7ca357253437ffe209d6cfc1d486bd1  payload2/source.003.txt" | sha256sum -c -
+      - name: Verify payload chunk 004
+        run: echo "c1982e5403ebef5cab80042d14c948de143c2dcd8e13f533c22cf0b8f65d077d  payload2/source.004.txt" | sha256sum -c -
+      - name: Verify payload chunk 005
+        run: echo "2bb243513ba7c7cbc67daee5fc8a96fac19119707b134db4c634adb73bc0e821  payload2/source.005.txt" | sha256sum -c -
+      - name: Verify payload chunk 006
+        run: echo "c1eb45a40bdee9c045eedc48f835397920bd5c5eff43e27764426736b9d84492  payload2/source.006.txt" | sha256sum -c -
+      - name: Verify payload chunk 007
+        run: echo "519b75492d599a1495cad9e473f16c62e4fde4567c3b8fbb6b1cb64b8e1aa28c  payload2/source.007.txt" | sha256sum -c -
+
       - name: Restore Android source
         shell: bash
         run: |
           set -euo pipefail
-          cat payload2/source.*.txt | base64 -d > textillustrator-source.tar.gz
+          cat payload2/source.*.txt > source.b64
+          echo "4406414b0218c560dd743ed154f36b5ab84002302e9db014515db4c35025bbee  source.b64" | sha256sum -c -
+          base64 -d source.b64 > textillustrator-source.tar.gz
+          echo "48d15a932531561a5a7aa77e77fb2755ad4893c14dc9031738b6381a58efcb3d  textillustrator-source.tar.gz" | sha256sum -c -
           mkdir -p textillustrator
           tar -xzf textillustrator-source.tar.gz -C textillustrator
           test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
