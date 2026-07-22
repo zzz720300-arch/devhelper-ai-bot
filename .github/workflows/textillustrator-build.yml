@@ -23,8 +23,16 @@ jobs:
 
       - name: Verify payload chunk 000
         run: echo "7a950d3f368cecfe6503ae9723c61a2f1b85dd52e22a70636d1013692ef7610a  payload2/source.000.txt" | sha256sum -c -
-      - name: Verify payload chunk 001
-        run: echo "4b42976114da86c1a2cbe784ece52516ca9c0064740610fe7b9e29761865c7cf  payload2/source.001.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 0
+        run: echo "e0df21c525d7143706af6773a54b204fedd716651245cf1c73fb80f209708645  payload2/source.001.0.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 1
+        run: echo "f06a7c729c9e567d3e3cbb35e73c2560d5bde72f08e47a130dbb81142abfaeeb  payload2/source.001.1.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 2
+        run: echo "aea3688a0cbe245cf0a5540d397c68373e72357ec9371b61c941d44f2724fdea  payload2/source.001.2.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 3
+        run: echo "3651d812072f240b1dae2933b65e42821570e5235ec102ef16ca5b9a1211f651  payload2/source.001.3.txt" | sha256sum -c -
+      - name: Verify payload chunk 001 part 4
+        run: echo "f2daa043fb837409cd3139873fd42a7d0ad77d14156f13aa9188a48fdff1b65a  payload2/source.001.4.txt" | sha256sum -c -
       - name: Verify payload chunk 002
         run: echo "84f58e8d11a075bfcfeb2b5e9535932e6353934d9e681d699765a702894cc1d0  payload2/source.002.txt" | sha256sum -c -
       - name: Verify payload chunk 003
@@ -42,7 +50,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat payload2/source.*.txt > source.b64
+          cat \
+            payload2/source.000.txt \
+            payload2/source.001.0.txt \
+            payload2/source.001.1.txt \
+            payload2/source.001.2.txt \
+            payload2/source.001.3.txt \
+            payload2/source.001.4.txt \
+            payload2/source.002.txt \
+            payload2/source.003.txt \
+            payload2/source.004.txt \
+            payload2/source.005.txt \
+            payload2/source.006.txt \
+            payload2/source.007.txt > source.b64
           echo "4406414b0218c560dd743ed154f36b5ab84002302e9db014515db4c35025bbee  source.b64" | sha256sum -c -
           base64 -d source.b64 > textillustrator-source.tar.gz
           echo "48d15a932531561a5a7aa77e77fb2755ad4893c14dc9031738b6381a58efcb3d  textillustrator-source.tar.gz" | sha256sum -c -
