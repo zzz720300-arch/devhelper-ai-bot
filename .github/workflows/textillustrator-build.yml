@@ -80,6 +80,14 @@ jobs:
           echo "48d15a932531561a5a7aa77e77fb2755ad4893c14dc9031738b6381a58efcb3d  textillustrator-source.tar.gz" | sha256sum -c -
           mkdir -p textillustrator
           tar -xzf textillustrator-source.tar.gz -C textillustrator
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt')
+          s = p.read_text()
+          s = s.replace('import androidx.activity.compose.BackHandler\n', 'import androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent\n')
+          s = s.replace('@Composable fun TextIllustratorTheme(content:@Composable()->Unit)', '@Composable fun TextIllustratorTheme(content: @Composable () -> Unit)')
+          p.write_text(s)
+          PY
           test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
           test -f textillustrator/app/build.gradle.kts
 
