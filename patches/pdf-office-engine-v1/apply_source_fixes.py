@@ -1,6 +1,6 @@
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[2]
+root = Path(__file__).resolve().parent
 source = root / "pdf-engine-pdfbox/src/main/java/ru/pdfoffice/engine/pdfbox/PdfBoxOfficeSdk.kt"
 text = source.read_text(encoding="utf-8")
 replacements = {
