@@ -2,7 +2,7 @@ name: TextIllustrator 1.0.4 personal build
 
 on:
   push:
-    branches: [ textillustrator-1.0.4 ]
+    branches: [ textillustrator-1.0.4-build2 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat payload/source.*.txt | base64 -d > textillustrator-source.tar.gz
+          cat payload2/source.*.txt | base64 -d > textillustrator-source.tar.gz
           mkdir -p textillustrator
           tar -xzf textillustrator-source.tar.gz -C textillustrator
           test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
