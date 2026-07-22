@@ -49,6 +49,11 @@ jobs:
           s = s.replace('import androidx.activity.compose.BackHandler\n', 'import androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent\n')
           s = s.replace('@Composable fun TextIllustratorTheme(content:@Composable()->Unit)', '@Composable fun TextIllustratorTheme(content: @Composable () -> Unit)')
           p.write_text(s)
+          m = Path('textillustrator/app/src/main/AndroidManifest.xml')
+          x = m.read_text()
+          x = x.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools">')
+          x = x.replace('        <provider\n            android:name="androidx.core.content.FileProvider"', '        <provider\n            android:name="androidx.startup.InitializationProvider"\n            android:authorities="${applicationId}.androidx-startup"\n            android:exported="false"\n            tools:node="merge">\n            <meta-data\n                android:name="androidx.work.WorkManagerInitializer"\n                tools:node="remove" />\n        </provider>\n\n        <provider\n            android:name="androidx.core.content.FileProvider"')
+          m.write_text(x)
           PY
 
       - uses: actions/setup-java@v4
