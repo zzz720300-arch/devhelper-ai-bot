@@ -52,6 +52,7 @@ jobs:
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
           test ! -f ResearchDocMobile/app/src/main/assets/routerai.key
           sed -i 's/compileSdk = 37/compileSdk = 36/g; s/targetSdk = 37/targetSdk = 36/g' ResearchDocMobile/app/build.gradle.kts
+          mkdir -p delivery/reports
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -82,37 +83,65 @@ jobs:
           chmod +x ResearchDocMobile/gradlew
           ResearchDocMobile/gradlew -p ResearchDocMobile --version
 
+      - name: Compile debug
+        shell: bash
+        run: |
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile clean compileDebugJavaWithJavac --stacktrace > delivery/reports/compile.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/compile.status
+          tail -n 80 delivery/reports/compile.log
+          exit 0
+
       - name: Unit tests
         shell: bash
         run: |
-          set -euo pipefail
-          ResearchDocMobile/gradlew -p ResearchDocMobile clean test --stacktrace
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile testDebugUnitTest --stacktrace > delivery/reports/unit.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/unit.status
+          tail -n 80 delivery/reports/unit.log
+          exit 0
 
       - name: Lint
         shell: bash
         run: |
-          set -euo pipefail
-          ResearchDocMobile/gradlew -p ResearchDocMobile lint --stacktrace
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile lintDebug --stacktrace > delivery/reports/lint.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/lint.status
+          tail -n 80 delivery/reports/lint.log
+          exit 0
 
       - name: Build release APK
         shell: bash
         run: |
-          set -euo pipefail
-          ResearchDocMobile/gradlew -p ResearchDocMobile assembleRelease --stacktrace
-          mkdir -p delivery/reports
-          cp ResearchDocMobile/app/build/outputs/apk/release/app-release-unsigned.apk delivery/ResearchDoc-1.0.0-unsigned.apk
-          cp -r ResearchDocMobile/app/build/reports/tests delivery/reports/tests || true
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile assembleRelease --stacktrace > delivery/reports/build.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/build.status
+          tail -n 100 delivery/reports/build.log
+          if [ "$status" -eq 0 ]; then
+            cp ResearchDocMobile/app/build/outputs/apk/release/app-release-unsigned.apk delivery/ResearchDoc-1.0.0-unsigned.apk
+          fi
+          cp -r ResearchDocMobile/app/build/reports/tests delivery/reports/tests 2>/dev/null || true
           cp ResearchDocMobile/app/build/reports/lint-results*.html delivery/reports/ 2>/dev/null || true
           cp ResearchDocMobile/app/build/reports/lint-results*.xml delivery/reports/ 2>/dev/null || true
+          exit 0
 
       - name: Validate unsigned APK
         shell: bash
         run: |
-          set -euo pipefail
-          test -s delivery/ResearchDoc-1.0.0-unsigned.apk
-          unzip -t delivery/ResearchDoc-1.0.0-unsigned.apk >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/aapt2-badging.txt
-          sha256sum delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/ResearchDoc-1.0.0-unsigned.sha256
+          set +e
+          if [ -s delivery/ResearchDoc-1.0.0-unsigned.apk ]; then
+            unzip -t delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/unzip-test.txt 2>&1
+            "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/aapt2-badging.txt 2>&1
+            sha256sum delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/ResearchDoc-1.0.0-unsigned.sha256
+            echo 0 > delivery/reports/validate.status
+          else
+            echo 1 > delivery/reports/validate.status
+          fi
+          exit 0
 
       - name: Package source ZIP
         shell: bash
@@ -139,22 +168,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > delivery/BUILD_REPORT.txt <<'REPORT'
+          cat > delivery/BUILD_REPORT.txt <<REPORT
           Product: ResearchDoc Mobile 1.0.0
           Platform: Android
-          Build: release unsigned APK
           Java: 17
           Gradle: 9.5.0
           Android Gradle Plugin: 9.3.0
           compileSdk/targetSdk/minSdk: 36/36/26
-          Checks: clean, unit tests, lint, assembleRelease, ZIP integrity, aapt2 badging, SHA-256
+          Compile status: $(cat delivery/reports/compile.status)
+          Unit status: $(cat delivery/reports/unit.status)
+          Lint status: $(cat delivery/reports/lint.status)
+          Build status: $(cat delivery/reports/build.status)
+          Validate status: $(cat delivery/reports/validate.status)
           API key: not included in public source or CI artifact; injected into the private final APK after build.
           REPORT
 
       - name: Upload build package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: RESEARCHDOC_MOBILE_BUILD
           path: delivery/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Quality gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat delivery/reports/compile.status)" = "0"
+          test "$(cat delivery/reports/unit.status)" = "0"
+          test "$(cat delivery/reports/lint.status)" = "0"
+          test "$(cat delivery/reports/build.status)" = "0"
+          test "$(cat delivery/reports/validate.status)" = "0"
