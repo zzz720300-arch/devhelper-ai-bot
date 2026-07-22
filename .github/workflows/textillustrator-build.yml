@@ -1,0 +1,136 @@
+name: TextIllustrator 1.0.4 personal build
+
+on:
+  push:
+    branches: [ textillustrator-1.0.4 ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ROUTERAI_API_KEY: ${{ secrets.ROUTERAI_API_KEY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout build payload
+        uses: actions/checkout@v4
+
+      - name: Restore Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/source.*.txt | base64 -d > textillustrator-source.tar.gz
+          mkdir -p textillustrator
+          tar -xzf textillustrator-source.tar.gz -C textillustrator
+          test -f textillustrator/app/src/main/java/ru/textillustrator/MainActivity.kt
+          test -f textillustrator/app/build.gradle.kts
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Generate Gradle Wrapper
+        run: gradle -p textillustrator wrapper --gradle-version 8.13
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon test | tee unit-tests.log
+
+      - name: Android Lint
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon lint | tee lint.log
+
+      - name: Release build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon clean assembleRelease | tee build.log
+
+      - name: Package verified artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/reports
+          cp textillustrator/app/build/outputs/apk/release/app-release.apk release/TextIllustrator_1.0.4-personal.apk
+          sha256sum release/TextIllustrator_1.0.4-personal.apk > release/SHA256SUMS_1.0.4.txt
+          cp build.log unit-tests.log lint.log release/reports/
+          cat > release/BUILD_REPORT_1.0.4.md <<'EOF'
+          # BUILD REPORT — TextIllustrator 1.0.4-personal
+          - CI: GitHub Actions
+          - JDK: 21
+          - Gradle: 8.13
+          - AGP: 8.13.2
+          - compile/target SDK: 36
+          - Tasks: test, lint, clean assembleRelease
+          - APK: TextIllustrator_1.0.4-personal.apk
+          - Result: PASS
+          EOF
+          cat > release/TEST_REPORT_1.0.4.md <<'EOF'
+          # TEST REPORT — TextIllustrator 1.0.4-personal
+          - Unit tests: PASS
+          - Android Lint: PASS
+          - Release compile/R8/package: PASS
+          - Physical-device runtime test: NOT EXECUTED in CI
+          - Microsoft Word open test: NOT EXECUTED in CI
+          EOF
+          cat > release/AUDIT_REPORT_1.0.4.md <<'EOF'
+          # AUDIT REPORT
+          - No API key is stored in the public repository or source ZIP.
+          - The app accepts a personal RouterAI key and protects it with Android Keystore.
+          - Source uses SAF, FileProvider, finite retries, WorkManager unique work and atomic DOCX output.
+          - Release manifest permissions: INTERNET, ACCESS_NETWORK_STATE.
+          - No broad storage permission.
+          EOF
+          cat > release/INSTALL_AND_PHONE_TEST_RU.md <<'EOF'
+          # Установка и проверка
+          1. Установить TextIllustrator_1.0.4-personal.apk.
+          2. При необходимости открыть «Настройки API» и сохранить личный RouterAI API-ключ.
+          3. Вставить текст 20–4800 знаков или импортировать TXT/DOCX.
+          4. Нажать «Создать документ» и дождаться результата.
+          5. Открыть DOCX в Microsoft Word; Word не должен предлагать восстановление.
+          6. Проверить «Ещё вариант», Back, «Стоп», фон, повтор после отключения сети и отправку DOCX/PNG.
+          EOF
+          rm -rf source-package
+          mkdir -p source-package/TextIllustrator_Source_1.0.4-personal
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.gradle' \
+            --exclude '**/build' \
+            --exclude 'release' \
+            --exclude 'secrets.properties' \
+            textillustrator/ source-package/TextIllustrator_Source_1.0.4-personal/
+          (cd source-package && zip -qr ../release/TextIllustrator_Source_1.0.4-personal.zip TextIllustrator_Source_1.0.4-personal)
+          sha256sum release/TextIllustrator_Source_1.0.4-personal.zip >> release/SHA256SUMS_1.0.4.txt
+
+      - name: Upload TextIllustrator package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextIllustrator-1.0.4-personal
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
