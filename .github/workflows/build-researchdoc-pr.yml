@@ -35,8 +35,8 @@ jobs:
           parts += sorted(glob.glob('payload/researchdoc_source.part.05.*'))
           parts += ['payload/researchdoc_source.part.06', 'payload/researchdoc_source.part.07', 'payload/researchdoc_source.part.08.00']
           parts += sorted(glob.glob('payload/researchdoc_source.part.08.01.*'))
-          if len(parts) != 18:
-              raise SystemExit(f'Expected 18 selected source parts, found {len(parts)}: {parts}')
+          if len(parts) != 19:
+              raise SystemExit(f'Expected 19 selected source parts, found {len(parts)}: {parts}')
           encoded = b''.join(pathlib.Path(p).read_bytes() for p in parts)
           compact = b''.join(encoded.split())
           archive = base64.b64decode(compact, validate=True)
