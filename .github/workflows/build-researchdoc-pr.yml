@@ -29,7 +29,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat payload/researchdoc_source.part.* | base64 -d > researchdoc_source.tar.gz
+          python3 - <<'PY'
+          import base64, glob, hashlib, pathlib
+          parts = sorted(glob.glob('payload/researchdoc_source.part.*'))
+          if len(parts) != 9:
+              raise SystemExit(f'Expected 9 source parts, found {len(parts)}')
+          encoded = b''.join(pathlib.Path(p).read_bytes() for p in parts)
+          compact = b''.join(encoded.split())
+          archive = base64.b64decode(compact, validate=True)
+          digest = hashlib.sha256(archive).hexdigest()
+          expected = '8d6c02a8fc0de6a6ff93b9d0aeccf2dae30125f9fc9f7e32b60a0a562b03c622'
+          if digest != expected:
+              raise SystemExit(f'Archive SHA mismatch: {digest}')
+          pathlib.Path('researchdoc_source.tar.gz').write_bytes(archive)
+          PY
+          gzip -t researchdoc_source.tar.gz
           tar -xzf researchdoc_source.tar.gz
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/MainActivity.java
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
