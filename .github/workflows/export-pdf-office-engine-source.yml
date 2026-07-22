@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - pdf-office-engine-v0.2.0-ci
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
