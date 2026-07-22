@@ -1,6 +1,9 @@
 from pathlib import Path
+import sys
 
-root = Path(__file__).resolve().parents[2]
+if len(sys.argv) != 2:
+    raise SystemExit("Usage: apply_hotfix.py <project-root>")
+root = Path(sys.argv[1]).resolve()
 
 build_file = root / "demo-app/build.gradle.kts"
 build_text = build_file.read_text(encoding="utf-8")
