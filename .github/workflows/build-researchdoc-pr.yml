@@ -52,6 +52,21 @@ jobs:
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
           test ! -f ResearchDocMobile/app/src/main/assets/routerai.key
           sed -i 's/compileSdk = 37/compileSdk = 36/g; s/targetSdk = 37/targetSdk = 36/g' ResearchDocMobile/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          validator = Path('ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/DocxValidator.java')
+          text = validator.read_text(encoding='utf-8')
+          text = text.replace('import javax.xml.XMLConstants;\n', '')
+          bad = '        try{f.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD,"");f.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA,"");}catch(Exception ignored){}\n'
+          if bad not in text:
+              raise SystemExit('DocxValidator patch target not found')
+          validator.write_text(text.replace(bad, ''), encoding='utf-8')
+          provider = Path('ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ShareFileProvider.java')
+          text = provider.read_text(encoding='utf-8')
+          if 'private Context requireContext()' not in text:
+              raise SystemExit('ShareFileProvider patch target not found')
+          provider.write_text(text.replace('requireContext()', 'providerContext()'), encoding='utf-8')
+          PY
           mkdir -p delivery/reports
 
       - name: Set up JDK 17
