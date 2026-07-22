@@ -6,6 +6,7 @@ on:
     paths:
       - "ci/ai-image-finisher-final6/**"
       - "ci/ai-image-finisher-tail12/**"
+      - "ci/ai-image-finisher-repair6/**"
       - ".github/workflows/ai-image-finisher-v10-apk.yml"
   workflow_dispatch:
 
@@ -29,37 +30,34 @@ jobs:
           import base64
           import hashlib
 
-          expected = {
-              "ci/ai-image-finisher-final6/source.final6.part.000": "6333c74522770e307205a6a9304b9b3bce88ecfa1e94b0bf35c83b4f42da3b37",
-              "ci/ai-image-finisher-final6/source.final6.part.001": "0294834d74275d211526dd34cee91baed4c7e00ea2483b6292d5c33caa82ad32",
-              "ci/ai-image-finisher-final6/source.final6.part.002": "7ce062525b5b4ff1e865c6572f2dbf63f34795281950e7fe0019dbf2918f9428",
-              "ci/ai-image-finisher-final6/source.final6.part.003": "753bb101a4e8efbee3f9bdb3ee66ac70b2007af11214ca46844ea55a749dd6f9",
-              "ci/ai-image-finisher-final6/source.final6.part.004": "fdf319622af8f9221ab7f2170a478dc4e0eedc5c8d1e5a119e162762d9d37e81",
-              "ci/ai-image-finisher-tail12/source.tail12.part.000": "67bec0a5414c13f68ded17298d3816e0ee6254c337e728ea23c1abecf78a2500",
-              "ci/ai-image-finisher-tail12/source.tail12.part.001": "cb2f328e8bccf3fe7219e3067dd67a56de31e48dc8e20cda4acf52d76a3cd44d",
-              "ci/ai-image-finisher-tail12/source.tail12.part.002": "4497e5964e672b80d7ea8209eebcaf4d023c3d882a7c93b489f6231fccc3edf9",
-              "ci/ai-image-finisher-tail12/source.tail12.part.003": "773ca24ecd1f62dee91f82ef6169c9be2dd2d450013b4a91d1010c690b9cfb2e",
-              "ci/ai-image-finisher-tail12/source.tail12.part.004": "32612318a7dc16a3b6ccbd5cfd3975ee461904ab46eaf1f52bde720fbd83a6c3",
-              "ci/ai-image-finisher-tail12/source.tail12.part.005": "6a50bf2d5d37fc14d43379cd549d7c64f41d89819a6f6541c3ddc22630970991",
-              "ci/ai-image-finisher-tail12/source.tail12.part.006": "646e8db6073bfc3c8ed7b00c82cbc339201b7445d67d1637b389c02c2a046203",
-          }
-          chunks = []
-          for path, wanted in expected.items():
-              data = Path(path).read_bytes()
-              actual = hashlib.sha256(data).hexdigest()
-              print(f"CHUNK {path} bytes={len(data)} sha256={actual}")
-              if actual != wanted:
-                  raise SystemExit(f"Chunk SHA mismatch: {path}: {actual} != {wanted}")
-              chunks.append(data.decode("ascii"))
-          encoded = "".join(chunks)
+          paths = [
+              "ci/ai-image-finisher-final6/source.final6.part.000",
+              "ci/ai-image-finisher-final6/source.final6.part.001",
+              "ci/ai-image-finisher-final6/source.final6.part.002",
+              "ci/ai-image-finisher-final6/source.final6.part.003",
+              "ci/ai-image-finisher-final6/source.final6.part.004",
+              "ci/ai-image-finisher-tail12/source.tail12.part.000",
+              "ci/ai-image-finisher-tail12/source.tail12.part.001",
+              "ci/ai-image-finisher-tail12/source.tail12.part.002",
+              "ci/ai-image-finisher-tail12/source.tail12.part.003",
+              "ci/ai-image-finisher-repair6/source.final6.part.013",
+              "ci/ai-image-finisher-repair6/source.final6.part.014",
+              "ci/ai-image-finisher-tail12/source.tail12.part.005",
+              "ci/ai-image-finisher-repair6/source.final6.part.017",
+              "ci/ai-image-finisher-repair6/source.final6.part.018",
+          ]
+          for path in paths:
+              if not Path(path).is_file():
+                  raise SystemExit(f"Missing source chunk: {path}")
+          encoded = "".join(Path(path).read_text(encoding="ascii") for path in paths)
           encoded = "".join(encoded.split())
           raw = base64.b64decode(encoded, validate=True)
           digest = hashlib.sha256(raw).hexdigest()
-          wanted_archive = "4d08ffd881b189c64d995f24ae6e46afc469c78426d66e0edf5245d55cb8f697"
+          expected = "4d08ffd881b189c64d995f24ae6e46afc469c78426d66e0edf5245d55cb8f697"
           print(f"SOURCE_ARCHIVE_BYTES={len(raw)}")
           print(f"SOURCE_ARCHIVE_SHA256={digest}")
-          if digest != wanted_archive:
-              raise SystemExit(f"Source SHA mismatch: {digest} != {wanted_archive}")
+          if digest != expected:
+              raise SystemExit(f"Source SHA mismatch: {digest} != {expected}")
           Path("/tmp/aif-source.tar.xz").write_bytes(raw)
           PY
           xz --test /tmp/aif-source.tar.xz
@@ -116,6 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
+          set +e
           ./gradlew --no-daemon --stacktrace \
             -PimageFinisher.internalModelBundle=true \
             -PimageFinisher.allowModifiedSource=true \
@@ -125,7 +124,14 @@ jobs:
             :test-app:assembleDebug \
             :test-app:assembleDebugAndroidTest \
             :imagefinisher-sdk:assembleRelease \
-            :imagefinisher-office:assembleRelease
+            :imagefinisher-office:assembleRelease 2>&1 | tee /tmp/aif-gradle.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "=== GRADLE_FAILURE_TAIL ==="
+            tail -n 250 /tmp/aif-gradle.log
+            exit "$RC"
+          fi
 
       - name: Verify launcher, signature and embedded models
         working-directory: aif-source
