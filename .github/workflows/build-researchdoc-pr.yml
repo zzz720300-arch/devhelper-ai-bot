@@ -1,0 +1,238 @@
+name: Build ResearchDoc Mobile
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-researchdoc-pr.yml'
+      - 'payload/researchdoc_source.part.*'
+      - 'payload/RESEARCHDOC_BUILD.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, glob, hashlib, pathlib
+          parts = [f'payload/researchdoc_source.part.{i:02d}' for i in range(5)]
+          parts += sorted(glob.glob('payload/researchdoc_source.part.05.*'))
+          parts += ['payload/researchdoc_source.part.06', 'payload/researchdoc_source.part.07', 'payload/researchdoc_source.part.08.00']
+          parts += sorted(glob.glob('payload/researchdoc_source.part.08.01.*'))
+          if len(parts) != 19:
+              raise SystemExit(f'Expected 19 selected source parts, found {len(parts)}: {parts}')
+          encoded = b''.join(pathlib.Path(p).read_bytes() for p in parts)
+          compact = b''.join(encoded.split())
+          archive = base64.b64decode(compact, validate=True)
+          digest = hashlib.sha256(archive).hexdigest()
+          expected = '8d6c02a8fc0de6a6ff93b9d0aeccf2dae30125f9fc9f7e32b60a0a562b03c622'
+          if digest != expected:
+              raise SystemExit(f'Archive SHA mismatch: {digest}')
+          pathlib.Path('researchdoc_source.tar.gz').write_bytes(archive)
+          PY
+          gzip -t researchdoc_source.tar.gz
+          tar -xzf researchdoc_source.tar.gz
+          test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/MainActivity.java
+          test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
+          test ! -f ResearchDocMobile/app/src/main/assets/routerai.key
+          sed -i 's/compileSdk = 37/compileSdk = 36/g; s/targetSdk = 37/targetSdk = 36/g' ResearchDocMobile/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          validator = Path('ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/DocxValidator.java')
+          text = validator.read_text(encoding='utf-8')
+          text = text.replace('import javax.xml.XMLConstants;\n', '')
+          bad = '        try{f.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD,"");f.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA,"");}catch(Exception ignored){}\n'
+          if bad not in text:
+              raise SystemExit('DocxValidator patch target not found')
+          validator.write_text(text.replace(bad, ''), encoding='utf-8')
+
+          provider = Path('ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ShareFileProvider.java')
+          text = provider.read_text(encoding='utf-8')
+          if 'private Context requireContext()' not in text:
+              raise SystemExit('ShareFileProvider patch target not found')
+          provider.write_text(text.replace('requireContext()', 'providerContext()'), encoding='utf-8')
+
+          engine = Path('ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java')
+          text = engine.read_text(encoding='utf-8')
+          anchor = '        JSONObject plan=new JSONObject(JobStore.readJobText(context,job.id,"plan.json"));\n        List<SourceRecord> candidates=new ArrayList<>();'
+          replacement = '        JSONObject plan=new JSONObject(JobStore.readJobText(context,job.id,"plan.json"));\n        final JobRecord activeJob=job;\n        final JSONObject activePlan=plan;\n        List<SourceRecord> candidates=new ArrayList<>();'
+          if anchor not in text:
+              raise SystemExit('ResearchEngine final-variable anchor not found')
+          text = text.replace(anchor, replacement)
+          replacements = {
+              'writeSection(job,sections.get(index),index,total,accepted,draft.toString())': 'writeSection(activeJob,sections.get(index),index,total,accepted,draft.toString())',
+              'JobStore.file(context,job.id,"ResearchDoc_"+safeFileName(job.topic)+".docx")': 'JobStore.file(context,activeJob.id,"ResearchDoc_"+safeFileName(activeJob.topic)+".docx")',
+              'DocxBuilder.build(out,plan.optString("title",job.topic),finalText,accepted)': 'DocxBuilder.build(out,activePlan.optString("title",activeJob.topic),finalText,accepted)',
+              'plan.optString("title",job.topic),sections,accepted)': 'activePlan.optString("title",activeJob.topic),sections,accepted)'
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'ResearchEngine patch target not found: {old}')
+              text = text.replace(old, new)
+          engine.write_text(text, encoding='utf-8')
+          PY
+          mkdir -p delivery/reports
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 9.5.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Create Gradle Wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p ResearchDocMobile wrapper --gradle-version 9.5.0
+          chmod +x ResearchDocMobile/gradlew
+          ResearchDocMobile/gradlew -p ResearchDocMobile --version
+
+      - name: Compile debug
+        shell: bash
+        run: |
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile clean compileDebugJavaWithJavac --stacktrace > delivery/reports/compile.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/compile.status
+          tail -n 80 delivery/reports/compile.log
+          exit 0
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile testDebugUnitTest --stacktrace > delivery/reports/unit.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/unit.status
+          tail -n 80 delivery/reports/unit.log
+          exit 0
+
+      - name: Lint
+        shell: bash
+        run: |
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile lintDebug --stacktrace > delivery/reports/lint.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/lint.status
+          tail -n 80 delivery/reports/lint.log
+          exit 0
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          set +e
+          ResearchDocMobile/gradlew -p ResearchDocMobile assembleRelease --stacktrace > delivery/reports/build.log 2>&1
+          status=$?
+          echo "$status" > delivery/reports/build.status
+          tail -n 100 delivery/reports/build.log
+          if [ "$status" -eq 0 ]; then
+            cp ResearchDocMobile/app/build/outputs/apk/release/app-release-unsigned.apk delivery/ResearchDoc-1.0.0-unsigned.apk
+          fi
+          cp -r ResearchDocMobile/app/build/reports/tests delivery/reports/tests 2>/dev/null || true
+          cp ResearchDocMobile/app/build/reports/lint-results*.html delivery/reports/ 2>/dev/null || true
+          cp ResearchDocMobile/app/build/reports/lint-results*.xml delivery/reports/ 2>/dev/null || true
+          exit 0
+
+      - name: Validate unsigned APK
+        shell: bash
+        run: |
+          set +e
+          if [ -s delivery/ResearchDoc-1.0.0-unsigned.apk ]; then
+            unzip -t delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/unzip-test.txt 2>&1
+            "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/aapt2-badging.txt 2>&1
+            sha256sum delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/ResearchDoc-1.0.0-unsigned.sha256
+            echo 0 > delivery/reports/validate.status
+          else
+            echo 1 > delivery/reports/validate.status
+          fi
+          exit 0
+
+      - name: Package source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -qr delivery/ResearchDocMobile-1.0.0-SOURCE.zip ResearchDocMobile \
+            -x 'ResearchDocMobile/.gradle/*' 'ResearchDocMobile/**/build/*' 'ResearchDocMobile/.idea/*' 'ResearchDocMobile/local.properties'
+          test -s delivery/ResearchDocMobile-1.0.0-SOURCE.zip
+          sha256sum delivery/ResearchDocMobile-1.0.0-SOURCE.zip > delivery/ResearchDocMobile-1.0.0-SOURCE.sha256
+
+      - name: Package Android signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p signing-tools/lib
+          cp "$ANDROID_HOME/build-tools/36.0.0/apksigner" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/zipalign" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/aapt2" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" signing-tools/lib/
+          chmod +x signing-tools/apksigner signing-tools/zipalign signing-tools/aapt2
+          tar -czf delivery/ANDROID_SIGNING_TOOLS_36.tar.gz signing-tools
+
+      - name: Build report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > delivery/BUILD_REPORT.txt <<REPORT
+          Product: ResearchDoc Mobile 1.0.0
+          Platform: Android
+          Java: 17
+          Gradle: 9.5.0
+          Android Gradle Plugin: 9.3.0
+          compileSdk/targetSdk/minSdk: 36/36/26
+          Compile status: $(cat delivery/reports/compile.status)
+          Unit status: $(cat delivery/reports/unit.status)
+          Lint status: $(cat delivery/reports/lint.status)
+          Build status: $(cat delivery/reports/build.status)
+          Validate status: $(cat delivery/reports/validate.status)
+          API key: not included in public source or CI artifact; injected into the private final APK after build.
+          REPORT
+
+      - name: Upload build package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RESEARCHDOC_MOBILE_BUILD
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Quality gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat delivery/reports/compile.status)" = "0"
+          test "$(cat delivery/reports/unit.status)" = "0"
+          test "$(cat delivery/reports/lint.status)" = "0"
+          test "$(cat delivery/reports/build.status)" = "0"
+          test "$(cat delivery/reports/validate.status)" = "0"

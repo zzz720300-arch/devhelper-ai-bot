@@ -1,0 +1,138 @@
+name: Build ResearchDoc Final
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-researchdoc-final-pr.yml'
+      - 'payload/apply_researchdoc_final_fixes.py'
+      - 'payload/researchdoc_source.part.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore and patch source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, glob, hashlib, pathlib
+          parts = [f'payload/researchdoc_source.part.{i:02d}' for i in range(5)]
+          parts += sorted(glob.glob('payload/researchdoc_source.part.05.*'))
+          parts += ['payload/researchdoc_source.part.06', 'payload/researchdoc_source.part.07', 'payload/researchdoc_source.part.08.00']
+          parts += sorted(glob.glob('payload/researchdoc_source.part.08.01.*'))
+          if len(parts) != 19:
+              raise SystemExit(f'Expected 19 source parts, found {len(parts)}')
+          encoded = b''.join(pathlib.Path(p).read_bytes() for p in parts)
+          archive = base64.b64decode(b''.join(encoded.split()), validate=True)
+          digest = hashlib.sha256(archive).hexdigest()
+          expected = '8d6c02a8fc0de6a6ff93b9d0aeccf2dae30125f9fc9f7e32b60a0a562b03c622'
+          if digest != expected:
+              raise SystemExit(f'Archive SHA mismatch: {digest}')
+          pathlib.Path('researchdoc_source.tar.gz').write_bytes(archive)
+          PY
+          gzip -t researchdoc_source.tar.gz
+          tar -xzf researchdoc_source.tar.gz
+          python3 payload/apply_researchdoc_final_fixes.py
+          test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/MainActivity.java
+          test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
+          test ! -f ResearchDocMobile/app/src/main/assets/routerai.key
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Create Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p ResearchDocMobile wrapper --gradle-version 9.5.0
+          chmod +x ResearchDocMobile/gradlew
+
+      - name: Compile and unit test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ResearchDocMobile/gradlew -p ResearchDocMobile clean testDebugUnitTest --stacktrace
+
+      - name: Lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ResearchDocMobile/gradlew -p ResearchDocMobile lintDebug --stacktrace
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ResearchDocMobile/gradlew -p ResearchDocMobile assembleRelease --stacktrace
+          mkdir -p delivery/reports
+          cp ResearchDocMobile/app/build/outputs/apk/release/app-release-unsigned.apk delivery/ResearchDoc-1.0.0-unsigned.apk
+          cp -r ResearchDocMobile/app/build/reports/tests delivery/reports/tests || true
+          cp ResearchDocMobile/app/build/reports/lint-results*.html delivery/reports/ 2>/dev/null || true
+          cp ResearchDocMobile/app/build/reports/lint-results*.xml delivery/reports/ 2>/dev/null || true
+
+      - name: Validate and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s delivery/ResearchDoc-1.0.0-unsigned.apk
+          unzip -t delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/unzip-test.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/reports/aapt2-badging.txt
+          sha256sum delivery/ResearchDoc-1.0.0-unsigned.apk > delivery/ResearchDoc-1.0.0-unsigned.sha256
+          zip -qr delivery/ResearchDocMobile-1.0.0-SOURCE.zip ResearchDocMobile \
+            -x 'ResearchDocMobile/.gradle/*' 'ResearchDocMobile/**/build/*' 'ResearchDocMobile/.idea/*' 'ResearchDocMobile/local.properties'
+          sha256sum delivery/ResearchDocMobile-1.0.0-SOURCE.zip > delivery/ResearchDocMobile-1.0.0-SOURCE.sha256
+          mkdir -p signing-tools/lib
+          cp "$ANDROID_HOME/build-tools/36.0.0/apksigner" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/zipalign" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/aapt2" signing-tools/
+          cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" signing-tools/lib/
+          chmod +x signing-tools/apksigner signing-tools/zipalign signing-tools/aapt2
+          tar -czf delivery/ANDROID_SIGNING_TOOLS_36.tar.gz signing-tools
+          cat > delivery/BUILD_REPORT.txt <<'REPORT'
+          Product: ResearchDoc Mobile 1.0.0
+          Platform: Android
+          Java: 17
+          Gradle: 9.5.0
+          Android Gradle Plugin: 9.3.0
+          compileSdk/targetSdk/minSdk: 36/36/26
+          Compile: PASS
+          Unit tests: PASS
+          Lint: PASS
+          Release APK: PASS
+          APK ZIP validation: PASS
+          API key: excluded from source and CI artifact; added only to the private personal APK.
+          REPORT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RESEARCHDOC_MOBILE_FINAL_BUILD
+          path: delivery/
+          if-no-files-found: error
+          retention-days: 30
