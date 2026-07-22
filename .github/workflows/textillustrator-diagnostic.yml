@@ -1,0 +1,78 @@
+name: TextIllustrator diagnostic compile
+
+on:
+  push:
+    branches: [ textillustrator-1.0.4-build2 ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            payload2/source.000.txt \
+            payload2/source.001.0.txt \
+            payload2/source.001.1.txt \
+            payload2/source.001.2.txt \
+            payload2/source.001.3.txt \
+            payload2/source.001.4.0.txt \
+            payload2/source.001.4.1.txt \
+            payload2/source.001.4.2.txt \
+            payload2/source.001.4.3.txt \
+            payload2/source.001.4.4.txt \
+            payload2/source.002.txt \
+            payload2/source.003.txt \
+            payload2/source.004.txt \
+            payload2/source.005.txt \
+            payload2/source.006.txt \
+            payload2/source.007.txt > source.b64
+          echo "4406414b0218c560dd743ed154f36b5ab84002302e9db014515db4c35025bbee  source.b64" | sha256sum -c -
+          base64 -d source.b64 > textillustrator-source.tar.gz
+          mkdir -p textillustrator
+          tar -xzf textillustrator-source.tar.gz -C textillustrator
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Compile and test with full diagnostics
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle -p textillustrator --no-daemon test --stacktrace --info 2>&1 | tee diagnostic.log
+          echo ${PIPESTATUS[0]} > diagnostic.exitcode
+
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextIllustrator-diagnostic-log
+          path: |
+            diagnostic.log
+            diagnostic.exitcode
+          if-no-files-found: error
+          retention-days: 7
