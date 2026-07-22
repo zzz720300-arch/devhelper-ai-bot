@@ -1,0 +1,208 @@
+name: Build PDF Office Engine 1.1 APK
+
+on:
+  push:
+    branches: [pdf-office-engine-v0.2.0-ci]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: PDF_OFFICE_ENGINE_v1.1.0
+  SOURCE_SHA256: 9331d8b50350cb7573d8f58b3314f36bf4854fb158bb1754109fd998ba99c0c7
+  PATCH_SHA256: 3796710c43fa43cbcaa5cdb06fb30eb61444f147882c30174b2e45ba85dae74a
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source and apply version 1.1 hotfixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > source.tar.gz
+          test "$(sha256sum source.tar.gz | awk '{print $1}')" = "$SOURCE_SHA256"
+          tar -xzf source.tar.gz
+          mv PDF_OFFICE_ENGINE_v1.0.0_CI_TREE "$PROJECT_DIR"
+          cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
+          (cd "$PROJECT_DIR" && python3 apply_source_fixes.py)
+          cat payload/pdf-office-engine-v1-1-correct/patch.part.* | base64 -d > v1.1.tar.gz
+          test "$(sha256sum v1.1.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
+          tar -xzf v1.1.tar.gz -C "$PROJECT_DIR"
+          python3 patches/pdf-office-engine-v1-1-hotfix/apply_hotfix.py "$PROJECT_DIR"
+          grep -q 'versionName = "1.1.0"' "$PROJECT_DIR/demo-app/build.gradle.kts"
+          grep -q 'buildConfig = true' "$PROJECT_DIR/demo-app/build.gradle.kts"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK and Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          cd "$PROJECT_DIR"
+          gradle wrapper --gradle-version 8.13
+          chmod +x gradlew
+      - name: Create release signing key
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v -keystore ci-release.keystore -storepass android -alias pdf-office-ci -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=PDF Office Engine 1.1, OU=CI, O=PDF Office, L=Tallinn, C=EE"
+          printf '%s\n' 'storeFile=ci-release.keystore' 'storePassword=android' 'keyAlias=pdf-office-ci' 'keyPassword=android' > keystore.properties
+      - name: Build, unit test and lint
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon --console=plain \
+            clean \
+            :pdf-contract:testDebugUnitTest \
+            :pdf-engine-pdfbox:testDebugUnitTest \
+            :pdf-render:testDebugUnitTest \
+            :pdf-contract:lintDebug \
+            :pdf-engine-pdfbox:lintDebug \
+            :pdf-render:lintDebug \
+            :demo-app:lintDebug \
+            :pdf-contract:assembleRelease \
+            :pdf-engine-pdfbox:assembleRelease \
+            :pdf-render:assembleRelease \
+            :demo-app:assembleDebug \
+            :demo-app:assembleRelease \
+            :integration-test-host:assembleDebug \
+            > build.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Unresolved reference|Compilation error)' build.log | tail -n 400 || true
+            tail -n 450 build.log || true
+            exit "$status"
+          fi
+          tail -n 180 build.log
+      - name: Verify and package APK, AAR and source ZIP
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery/sdk
+          RELEASE_APK=demo-app/build/outputs/apk/release/demo-app-release.apk
+          DEBUG_APK=demo-app/build/outputs/apk/debug/demo-app-debug.apk
+          HOST_APK=integration-test-host/build/outputs/apk/debug/integration-test-host-debug.apk
+          test -s "$RELEASE_APK" && test -s "$DEBUG_APK" && test -s "$HOST_APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$RELEASE_APK" > delivery/APK_SIGNATURE_REPORT.txt
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -v 4 "$RELEASE_APK" > delivery/APK_ZIPALIGN_REPORT.txt
+          cp "$RELEASE_APK" delivery/PDF_OFFICE_ENGINE_v1.1.0_RELEASE.apk
+          cp "$DEBUG_APK" delivery/PDF_OFFICE_ENGINE_v1.1.0_DEBUG.apk
+          cp "$HOST_APK" delivery/PDF_OFFICE_ENGINE_INTEGRATION_HOST_DEBUG.apk
+          cp pdf-contract/build/outputs/aar/pdf-contract-release.aar delivery/sdk/
+          cp pdf-engine-pdfbox/build/outputs/aar/pdf-engine-pdfbox-release.aar delivery/sdk/
+          cp pdf-render/build/outputs/aar/pdf-render-release.aar delivery/sdk/
+          cp build.log delivery/
+          mkdir -p ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE
+          rsync -a --exclude '.gradle/' --exclude '.kotlin/' --exclude '**/build/' --exclude 'delivery/' --exclude 'ci-release.keystore' --exclude 'keystore.properties' --exclude 'local.properties' --exclude '*.log' ./ ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/
+          cat > ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/README_BUILD_RU.md <<'EOF'
+          # PDF Office Engine 1.1.0
+          Требуется JDK 17, Android SDK 36 и Build Tools 36.0.0.
+          Debug: gradlew.bat clean :demo-app:assembleDebug
+          Release: создать keystore.properties и выполнить gradlew.bat clean :demo-app:assembleRelease
+          EOF
+          (cd ../source-export && zip -qr ../"$PROJECT_DIR"/delivery/PDF_OFFICE_ENGINE_v1.1.0_SOURCE.zip PDF_OFFICE_ENGINE_v1.1.0_SOURCE)
+          find delivery -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > delivery/SHA256SUMS.txt
+          find delivery -type f -printf '%P\t%s bytes\n' | sort > delivery/ARTIFACTS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_1_DELIVERY
+          path: ${{ env.PROJECT_DIR }}/delivery
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_1_FAILURE_LOG
+          path: ${{ env.PROJECT_DIR }}/build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  emulator-tests:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source and hotfixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > source.tar.gz
+          test "$(sha256sum source.tar.gz | awk '{print $1}')" = "$SOURCE_SHA256"
+          tar -xzf source.tar.gz
+          mv PDF_OFFICE_ENGINE_v1.0.0_CI_TREE "$PROJECT_DIR"
+          cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
+          (cd "$PROJECT_DIR" && python3 apply_source_fixes.py)
+          cat payload/pdf-office-engine-v1-1-correct/patch.part.* | base64 -d > v1.1.tar.gz
+          test "$(sha256sum v1.1.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
+          tar -xzf v1.1.tar.gz -C "$PROJECT_DIR"
+          python3 patches/pdf-office-engine-v1-1-hotfix/apply_hotfix.py "$PROJECT_DIR"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK and wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          cd "$PROJECT_DIR"
+          gradle wrapper --gradle-version 8.13
+          chmod +x gradlew
+      - name: Run engine, host and UI tests on API 34
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          disk-size: 6000M
+          heap-size: 2048M
+          script: |
+            cd "$PROJECT_DIR"
+            set +e
+            ./gradlew --no-daemon --console=plain :pdf-engine-pdfbox:connectedDebugAndroidTest :integration-test-host:connectedDebugAndroidTest :demo-app:connectedDebugAndroidTest > emulator-tests.log 2>&1
+            status=$?
+            set -e
+            cat emulator-tests.log
+            exit "$status"
+      - name: Collect test evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$PROJECT_DIR/emulator-evidence"
+          cp "$PROJECT_DIR/emulator-tests.log" "$PROJECT_DIR/emulator-evidence/" 2>/dev/null || true
+          find "$PROJECT_DIR" -path '*/build/reports/androidTests/*' -type f -print0 | xargs -0 -r cp --parents -t "$PROJECT_DIR/emulator-evidence/"
+          find "$PROJECT_DIR" -path '*/build/outputs/androidTest-results/*' -type f -print0 | xargs -0 -r cp --parents -t "$PROJECT_DIR/emulator-evidence/"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PDF_OFFICE_ENGINE_V1_1_EMULATOR_EVIDENCE
+          path: ${{ env.PROJECT_DIR }}/emulator-evidence
+          if-no-files-found: warn
+          retention-days: 30

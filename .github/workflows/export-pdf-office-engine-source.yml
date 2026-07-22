@@ -1,0 +1,37 @@
+name: Export PDF Office Engine Source
+
+on:
+  push:
+    branches:
+      - pdf-office-engine-v0.2.0-ci
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA256: 9331d8b50350cb7573d8f58b3314f36bf4854fb158bb1754109fd998ba99c0c7
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and validate archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > PDF_OFFICE_ENGINE_v1.0.0_SOURCE.tar.gz
+          test "$(sha256sum PDF_OFFICE_ENGINE_v1.0.0_SOURCE.tar.gz | awk '{print $1}')" = "$SOURCE_SHA256"
+          tar -tzf PDF_OFFICE_ENGINE_v1.0.0_SOURCE.tar.gz >/dev/null
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_SOURCE_ARCHIVE
+          path: PDF_OFFICE_ENGINE_v1.0.0_SOURCE.tar.gz
+          if-no-files-found: error
+          retention-days: 30

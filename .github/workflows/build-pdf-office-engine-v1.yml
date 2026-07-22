@@ -1,0 +1,277 @@
+name: Build PDF Office Engine V1
+
+on:
+  push:
+    branches:
+      - pdf-office-engine-v0.2.0-ci
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: PDF_OFFICE_ENGINE_v1.0.0
+  SOURCE_SHA256: 9331d8b50350cb7573d8f58b3314f36bf4854fb158bb1754109fd998ba99c0c7
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
+
+jobs:
+  build-release:
+    name: Build, lint, unit test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Restore source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > ci-source.tar.gz
+          actual="$(sha256sum ci-source.tar.gz | awk '{print $1}')"
+          test "$actual" = "$SOURCE_SHA256"
+          tar -xzf ci-source.tar.gz
+          mv PDF_OFFICE_ENGINE_v1.0.0_CI_TREE "$PROJECT_DIR"
+          if [ -d patches/pdf-office-engine-v1 ]; then
+            cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
+          fi
+          test -f "$PROJECT_DIR/settings.gradle.kts"
+          test -f "$PROJECT_DIR/pdf-engine-pdfbox/src/main/java/ru/pdfoffice/engine/pdfbox/PdfBoxOfficeSdk.kt"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.1.0" "platform-tools"
+
+      - name: Generate Gradle wrapper
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle wrapper --gradle-version 8.13
+          chmod +x gradlew
+          ./gradlew --version
+
+      - name: Create temporary release signing key
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore ci-release.keystore \
+            -storepass android \
+            -alias pdf-office-ci \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=PDF Office CI, OU=CI, O=PDF Office, L=Tallinn, C=EE"
+          cat > keystore.properties <<'EOF_KEYSTORE'
+          storeFile=ci-release.keystore
+          storePassword=android
+          keyAlias=pdf-office-ci
+          keyPassword=android
+          EOF_KEYSTORE
+
+      - name: Clean, lint, unit test and build all artifacts
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon --console=plain \
+            clean \
+            :pdf-contract:testDebugUnitTest \
+            :pdf-contract:lintDebug \
+            :pdf-engine-pdfbox:testDebugUnitTest \
+            :pdf-engine-pdfbox:lintDebug \
+            :pdf-render:testDebugUnitTest \
+            :pdf-render:lintDebug \
+            :pdf-contract:assembleRelease \
+            :pdf-engine-pdfbox:assembleRelease \
+            :pdf-render:assembleRelease \
+            :pdf-engine-pdfbox:publishReleasePublicationToLocalBuildRepoRepository \
+            :demo-app:assembleDebug \
+            :demo-app:assembleRelease \
+            :demo-app:bundleRelease \
+            :integration-test-host:assembleDebug \
+            :integration-test-host:assembleRelease \
+            > build.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Gradle failure summary"
+            grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Could not resolve|Could not compile|Unresolved reference|Compilation error)' build.log | tail -n 250 || true
+            echo "--- BUILD LOG TAIL ---"
+            tail -n 300 build.log || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+          tail -n 120 build.log
+
+      - name: Upload Gradle build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_BUILD_LOG
+          path: ${{ env.PROJECT_DIR }}/build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Verify release APK and AAR files
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="demo-app/build/outputs/apk/release/demo-app-release.apk"
+          AAB="demo-app/build/outputs/bundle/release/demo-app-release.aab"
+          ENGINE_AAR="pdf-engine-pdfbox/build/outputs/aar/pdf-engine-pdfbox-release.aar"
+          CONTRACT_AAR="pdf-contract/build/outputs/aar/pdf-contract-release.aar"
+          RENDER_AAR="pdf-render/build/outputs/aar/pdf-render-release.aar"
+          test -s "$APK"
+          test -s "$AAB"
+          test -s "$ENGINE_AAR"
+          test -s "$CONTRACT_AAR"
+          test -s "$RENDER_AAR"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs "$APK"
+          unzip -t "$AAB"
+          unzip -t "$ENGINE_AAR"
+          unzip -t "$CONTRACT_AAR"
+          unzip -t "$RENDER_AAR"
+
+      - name: Package build outputs and reports
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/{aar,apk,aab,maven,reports,mapping,source}
+          cp pdf-contract/build/outputs/aar/pdf-contract-release.aar dist/aar/
+          cp pdf-engine-pdfbox/build/outputs/aar/pdf-engine-pdfbox-release.aar dist/aar/
+          cp pdf-render/build/outputs/aar/pdf-render-release.aar dist/aar/
+          cp demo-app/build/outputs/apk/debug/demo-app-debug.apk dist/apk/
+          cp demo-app/build/outputs/apk/release/demo-app-release.apk dist/apk/
+          cp integration-test-host/build/outputs/apk/debug/integration-test-host-debug.apk dist/apk/
+          cp integration-test-host/build/outputs/apk/release/integration-test-host-release-unsigned.apk dist/apk/
+          cp demo-app/build/outputs/bundle/release/demo-app-release.aab dist/aab/
+          cp -R build/local-maven/. dist/maven/
+          find . -path '*/build/reports/*' -type f -print0 | xargs -0 -r cp --parents -t dist/reports/
+          find demo-app/build/outputs/mapping -type f -print0 2>/dev/null | xargs -0 -r cp --parents -t dist/mapping/
+          cp ../ci-source.tar.gz dist/source/PDF_OFFICE_ENGINE_v1.0.0_SOURCE.tar.gz
+          find dist -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > dist/SHA256SUMS.txt
+          find dist -type f -printf '%P\t%s bytes\n' | sort > dist/ARTIFACT_MANIFEST.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_BUILD
+          path: ${{ env.PROJECT_DIR }}/dist
+          if-no-files-found: error
+          retention-days: 30
+
+  emulator-tests:
+    name: Android emulator integration tests
+    needs: build-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Restore source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/pdf-office-engine-v1-ci2/source.part.* | base64 -d > ci-source.tar.gz
+          actual="$(sha256sum ci-source.tar.gz | awk '{print $1}')"
+          test "$actual" = "$SOURCE_SHA256"
+          tar -xzf ci-source.tar.gz
+          mv PDF_OFFICE_ENGINE_v1.0.0_CI_TREE "$PROJECT_DIR"
+          if [ -d patches/pdf-office-engine-v1 ]; then
+            cp -R patches/pdf-office-engine-v1/. "$PROJECT_DIR"/
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build SDK and generate wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.1.0" "platform-tools"
+          cd "$PROJECT_DIR"
+          gradle wrapper --gradle-version 8.13
+          chmod +x gradlew
+
+      - name: Run connected tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          disk-size: 6000M
+          heap-size: 2048M
+          script: |
+            cd "$PROJECT_DIR"
+            set +e
+            ./gradlew --no-daemon --console=plain :pdf-engine-pdfbox:connectedDebugAndroidTest :integration-test-host:connectedDebugAndroidTest > connected-tests.log 2>&1
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              grep -nE '(^e: | error: |FAILURE:|What went wrong:|Execution failed for task|Could not resolve|Could not compile|Unresolved reference|FAILED)' connected-tests.log | tail -n 250 || true
+              tail -n 300 connected-tests.log || true
+              exit "$status"
+            fi
+            tail -n 120 connected-tests.log
+
+      - name: Package connected-test reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROJECT_DIR/emulator-test-results"
+          cp "$PROJECT_DIR/connected-tests.log" "$PROJECT_DIR/emulator-test-results/" 2>/dev/null || true
+          find "$PROJECT_DIR" -path '*/build/reports/androidTests/*' -type f -print0 | xargs -0 -r cp --parents -t "$PROJECT_DIR/emulator-test-results/"
+          find "$PROJECT_DIR" -path '*/build/outputs/androidTest-results/*' -type f -print0 | xargs -0 -r cp --parents -t "$PROJECT_DIR/emulator-test-results/"
+
+      - name: Upload emulator test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_OFFICE_ENGINE_V1_EMULATOR_TESTS
+          path: ${{ env.PROJECT_DIR }}/emulator-test-results
+          if-no-files-found: warn
+          retention-days: 30
