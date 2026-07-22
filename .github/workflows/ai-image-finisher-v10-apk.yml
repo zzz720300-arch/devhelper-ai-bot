@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "ci/ai-image-finisher/**"
+      - "ci/ai-image-finisher-final6/**"
+      - "ci/ai-image-finisher-tail12/**"
       - ".github/workflows/ai-image-finisher-v10-apk.yml"
   workflow_dispatch:
 
@@ -19,7 +20,7 @@ jobs:
       - name: Checkout CI payload
         uses: actions/checkout@v4
 
-      - name: Decode source payload
+      - name: Decode and verify source payload
         shell: bash
         run: |
           set -euo pipefail
@@ -29,42 +30,34 @@ jobs:
           import glob
           import hashlib
 
-          paths = sorted(glob.glob("ci/ai-image-finisher/source.b64.part.*"))
-          print("SOURCE_PARTS", paths)
-          if len(paths) != 12:
-              raise SystemExit(f"Expected 12 source chunks, got {len(paths)}")
-          encoded = "".join(Path(path).read_text(encoding="ascii") for path in paths)
+          prefix = sorted(glob.glob("ci/ai-image-finisher-final6/source.final6.part.*"))
+          tail = sorted(glob.glob("ci/ai-image-finisher-tail12/source.tail12.part.*"))
+          print("PREFIX_PARTS", prefix)
+          print("TAIL_PARTS", tail)
+          if len(prefix) != 5:
+              raise SystemExit(f"Expected 5 prefix chunks, got {len(prefix)}")
+          if len(tail) != 7:
+              raise SystemExit(f"Expected 7 tail chunks, got {len(tail)}")
+          encoded = "".join(Path(path).read_text(encoding="ascii") for path in prefix + tail)
           encoded = "".join(encoded.split())
           raw = base64.b64decode(encoded, validate=True)
           digest = hashlib.sha256(raw).hexdigest()
-          Path("/tmp/aif-source.tar.xz").write_bytes(raw)
+          expected = "4d08ffd881b189c64d995f24ae6e46afc469c78426d66e0edf5245d55cb8f697"
           print(f"SOURCE_ARCHIVE_BYTES={len(raw)}")
           print(f"SOURCE_ARCHIVE_SHA256={digest}")
+          if digest != expected:
+              raise SystemExit(f"Source SHA mismatch: {digest} != {expected}")
+          Path("/tmp/aif-source.tar.xz").write_bytes(raw)
           PY
-
-      - name: Stream-decompress source container
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s /tmp/aif-source.tar.xz
-          set +e
-          xz -dc /tmp/aif-source.tar.xz > /tmp/aif-source.tar
-          XZ_RC=$?
-          set -e
-          echo "XZ_STREAM_EXIT=$XZ_RC"
-          test -s /tmp/aif-source.tar
-          tar -tf /tmp/aif-source.tar >/tmp/aif-tar-list.txt
-          grep -q '^settings.gradle.kts$' /tmp/aif-tar-list.txt
-          grep -q '^gradlew$' /tmp/aif-tar-list.txt
-          grep -q '^instrumentation-test-app/app/src/main/java/ru/quantai/imagefinisher/test/MainActivity.kt$' /tmp/aif-tar-list.txt
-          echo "SOURCE_CONTAINER_STREAM=PASS"
+          xz --test /tmp/aif-source.tar.xz
+          echo "SOURCE_ARCHIVE_VERIFY=PASS"
 
       - name: Extract and verify source tree
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p aif-source
-          tar -xf /tmp/aif-source.tar -C aif-source
+          tar -xJf /tmp/aif-source.tar.xz -C aif-source
           test -f aif-source/settings.gradle.kts
           test -f aif-source/gradlew
           test -f aif-source/instrumentation-test-app/app/src/main/java/ru/quantai/imagefinisher/test/MainActivity.kt
