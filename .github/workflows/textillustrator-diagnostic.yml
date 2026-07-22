@@ -3,6 +3,8 @@ name: TextIllustrator diagnostic compile
 on:
   push:
     branches: [ textillustrator-1.0.4-build2 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
