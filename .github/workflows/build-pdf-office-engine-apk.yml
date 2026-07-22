@@ -37,7 +37,7 @@ jobs:
           cd "$PROJECT_DIR"
           python3 apply_source_fixes.py
           cd ..
-          cat payload/pdf-office-engine-v1-1/patch.part.* | base64 -d > version-1.1-patch.tar.gz
+          cat payload/pdf-office-engine-v1-1-correct/patch.part.* | base64 -d > version-1.1-patch.tar.gz
           test "$(sha256sum version-1.1-patch.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
           tar -xzf version-1.1-patch.tar.gz -C "$PROJECT_DIR"
           test -f "$PROJECT_DIR/demo-app/src/main/java/ru/pdfoffice/demo/AppLogger.kt"
@@ -198,7 +198,7 @@ jobs:
           cd "$PROJECT_DIR"
           python3 apply_source_fixes.py
           cd ..
-          cat payload/pdf-office-engine-v1-1/patch.part.* | base64 -d > version-1.1-patch.tar.gz
+          cat payload/pdf-office-engine-v1-1-correct/patch.part.* | base64 -d > version-1.1-patch.tar.gz
           test "$(sha256sum version-1.1-patch.tar.gz | awk '{print $1}')" = "$PATCH_SHA256"
           tar -xzf version-1.1-patch.tar.gz -C "$PROJECT_DIR"
 
