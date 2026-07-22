@@ -51,6 +51,7 @@ jobs:
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/MainActivity.java
           test -f ResearchDocMobile/app/src/main/java/ru/researchdoc/mobile/ResearchEngine.java
           test ! -f ResearchDocMobile/app/src/main/assets/routerai.key
+          sed -i 's/compileSdk = 37/compileSdk = 36/g; s/targetSdk = 37/targetSdk = 36/g' ResearchDocMobile/app/build.gradle.kts
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -66,12 +67,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 37
+      - name: Install Android SDK 36
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools"
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Create Gradle Wrapper
         shell: bash
@@ -145,7 +146,7 @@ jobs:
           Java: 17
           Gradle: 9.5.0
           Android Gradle Plugin: 9.3.0
-          compileSdk/targetSdk/minSdk: 37/37/26
+          compileSdk/targetSdk/minSdk: 36/36/26
           Checks: clean, unit tests, lint, assembleRelease, ZIP integrity, aapt2 badging, SHA-256
           API key: not included in public source or CI artifact; injected into the private final APK after build.
           REPORT
