@@ -22,7 +22,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - name: Restore source and apply version 1.1 hotfixes
         shell: bash
         run: |
@@ -39,7 +38,6 @@ jobs:
           python3 patches/pdf-office-engine-v1-1-hotfix/apply_hotfix.py "$PROJECT_DIR"
           grep -q 'versionName = "1.1.0"' "$PROJECT_DIR/demo-app/build.gradle.kts"
           grep -q 'buildConfig = true' "$PROJECT_DIR/demo-app/build.gradle.kts"
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -48,7 +46,6 @@ jobs:
         with:
           gradle-version: '8.13'
       - uses: android-actions/setup-android@v3
-
       - name: Install Android SDK and Gradle wrapper
         shell: bash
         run: |
@@ -58,7 +55,6 @@ jobs:
           cd "$PROJECT_DIR"
           gradle wrapper --gradle-version 8.13
           chmod +x gradlew
-
       - name: Create release signing key
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -66,7 +62,6 @@ jobs:
           set -euo pipefail
           keytool -genkeypair -v -keystore ci-release.keystore -storepass android -alias pdf-office-ci -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=PDF Office Engine 1.1, OU=CI, O=PDF Office, L=Tallinn, C=EE"
           printf '%s\n' 'storeFile=ci-release.keystore' 'storePassword=android' 'keyAlias=pdf-office-ci' 'keyPassword=android' > keystore.properties
-
       - name: Build, unit test and lint
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -96,7 +91,6 @@ jobs:
             exit "$status"
           fi
           tail -n 180 build.log
-
       - name: Verify and package APK, AAR and source ZIP
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -117,7 +111,7 @@ jobs:
           cp pdf-render/build/outputs/aar/pdf-render-release.aar delivery/sdk/
           cp build.log delivery/
           mkdir -p ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE
-          rsync -a --exclude '.gradle/' --exclude '**/build/' --exclude 'delivery/' --exclude 'ci-release.keystore' --exclude 'keystore.properties' --exclude 'local.properties' ./ ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/
+          rsync -a --exclude '.gradle/' --exclude '.kotlin/' --exclude '**/build/' --exclude 'delivery/' --exclude 'ci-release.keystore' --exclude 'keystore.properties' --exclude 'local.properties' --exclude '*.log' ./ ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/
           cat > ../source-export/PDF_OFFICE_ENGINE_v1.1.0_SOURCE/README_BUILD_RU.md <<'EOF'
           # PDF Office Engine 1.1.0
           Требуется JDK 17, Android SDK 36 и Build Tools 36.0.0.
@@ -127,14 +121,12 @@ jobs:
           (cd ../source-export && zip -qr ../"$PROJECT_DIR"/delivery/PDF_OFFICE_ENGINE_v1.1.0_SOURCE.zip PDF_OFFICE_ENGINE_v1.1.0_SOURCE)
           find delivery -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > delivery/SHA256SUMS.txt
           find delivery -type f -printf '%P\t%s bytes\n' | sort > delivery/ARTIFACTS.txt
-
       - uses: actions/upload-artifact@v4
         with:
           name: PDF_OFFICE_ENGINE_V1_1_DELIVERY
           path: ${{ env.PROJECT_DIR }}/delivery
           if-no-files-found: error
           retention-days: 30
-
       - name: Upload failure log
         if: failure()
         uses: actions/upload-artifact@v4
@@ -181,10 +173,10 @@ jobs:
           cd "$PROJECT_DIR"
           gradle wrapper --gradle-version 8.13
           chmod +x gradlew
-      - name: Run engine, host and UI tests
+      - name: Run engine, host and UI tests on API 34
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           target: google_apis
           arch: x86_64
           profile: pixel_2
@@ -193,7 +185,12 @@ jobs:
           heap-size: 2048M
           script: |
             cd "$PROJECT_DIR"
-            ./gradlew --no-daemon --console=plain :pdf-engine-pdfbox:connectedDebugAndroidTest :integration-test-host:connectedDebugAndroidTest :demo-app:connectedDebugAndroidTest | tee emulator-tests.log
+            set +e
+            ./gradlew --no-daemon --console=plain :pdf-engine-pdfbox:connectedDebugAndroidTest :integration-test-host:connectedDebugAndroidTest :demo-app:connectedDebugAndroidTest > emulator-tests.log 2>&1
+            status=$?
+            set -e
+            cat emulator-tests.log
+            exit "$status"
       - name: Collect test evidence
         if: always()
         shell: bash
